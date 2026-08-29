@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security or private-data concern
+    url: https://github.com/cocoHMC/omarchy-t1-touchbar/security
+    about: Use a private security report; never attach T1 identity artifacts.

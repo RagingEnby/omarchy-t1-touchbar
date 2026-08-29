@@ -35,6 +35,8 @@
 #include <zlib.h>
 #include <libgen.h>
 #include <signal.h>
+#include <errno.h>
+#include <fcntl.h>
 
 #include <curl/curl.h>
 
@@ -250,6 +252,11 @@ static int compare_versions(const char *s_ver1, const char *s_ver2)
 	return (get_version_num(s_ver1) & 0xFFFF00) - (get_version_num(s_ver2) & 0xFFFF00);
 }
 
+static int t1_privacy_mode(void)
+{
+	return getenv("IDEVICERESTORE_T1_EMBEDDEDOS") || getenv("IDEVICERESTORE_T1_PHASE14");
+}
+
 static void idevice_event_cb(const idevice_event_t *event, void *userdata)
 {
 	struct idevicerestore_client_t *client = (struct idevicerestore_client_t*)userdata;
@@ -266,13 +273,28 @@ static void idevice_event_cb(const idevice_event_t *event, void *userdata)
 		if (normal_check_mode(client) == 0) {
 			mutex_lock(&client->device_event_mutex);
 			client->mode = MODE_NORMAL;
-			logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) connected in normal mode\n", __func__, client->ecid, client->udid);
+			if (t1_privacy_mode()) {
+				logger(LL_DEBUG, "%s: target connected in normal mode (identifiers hidden)\n", __func__);
+			} else {
+				logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) connected in normal mode\n", __func__, client->ecid, client->udid);
+			}
 			cond_signal(&client->device_event_cond);
 			mutex_unlock(&client->device_event_mutex);
-		} else if (client->ecid && restore_check_mode(client) == 0) {
+		/*
+		 * T1 iBridge restore ramdisks can be the first mode visible to a
+		 * freshly-started idevicerestore process.  In that case no recovery
+		 * event has populated client->ecid yet, but restored itself is already
+		 * reachable over usbmux.  Probe it unconditionally; restore_idevice_new
+		 * already applies the ECID filter whenever one is known.
+		 */
+		} else if ((client->ecid || getenv("IDEVICERESTORE_T1_EMBEDDEDOS")) && restore_check_mode(client) == 0) {
 			mutex_lock(&client->device_event_mutex);
 			client->mode = MODE_RESTORE;
-			logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) connected in restore mode\n", __func__, client->ecid, client->udid);
+			if (t1_privacy_mode()) {
+				logger(LL_DEBUG, "%s: target connected in restore mode (identifiers hidden)\n", __func__);
+			} else {
+				logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) connected in restore mode\n", __func__, client->ecid, client->udid);
+			}
 			cond_signal(&client->device_event_cond);
 			mutex_unlock(&client->device_event_mutex);
 		}
@@ -283,7 +305,11 @@ static void idevice_event_cb(const idevice_event_t *event, void *userdata)
 		if (client->udid && !strcmp(event->udid, client->udid)) {
 			mutex_lock(&client->device_event_mutex);
 			client->mode = MODE_UNKNOWN;
-			logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) disconnected\n", __func__, client->ecid, client->udid);
+			if (t1_privacy_mode()) {
+				logger(LL_DEBUG, "%s: target disconnected (identifiers hidden)\n", __func__);
+			} else {
+				logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) disconnected\n", __func__, client->ecid, client->udid);
+			}
 			client->ignore_device_add_events = 0;
 			cond_signal(&client->device_event_cond);
 			mutex_unlock(&client->device_event_mutex);
@@ -319,7 +345,11 @@ static void irecv_event_cb(const irecv_device_event_t* event, void *userdata)
 				default:
 					client->mode = MODE_UNKNOWN;
 			}
-			logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) connected in %s mode\n", __func__, client->ecid, (client->udid) ? client->udid : "N/A", client->mode->string);
+			if (t1_privacy_mode()) {
+				logger(LL_DEBUG, "%s: target connected in %s mode (identifiers hidden)\n", __func__, client->mode->string);
+			} else {
+				logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) connected in %s mode\n", __func__, client->ecid, (client->udid) ? client->udid : "N/A", client->mode->string);
+			}
 			if (!client->device) {
 				client->device = get_irecv_device(client);
 			}
@@ -330,7 +360,11 @@ static void irecv_event_cb(const irecv_device_event_t* event, void *userdata)
 		if (client->ecid && event->device_info->ecid == client->ecid) {
 			mutex_lock(&client->device_event_mutex);
 			client->mode = MODE_UNKNOWN;
-			logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) disconnected\n", __func__, client->ecid, (client->udid) ? client->udid : "N/A");
+			if (t1_privacy_mode()) {
+				logger(LL_DEBUG, "%s: target disconnected (identifiers hidden)\n", __func__);
+			} else {
+				logger(LL_DEBUG, "%s: device %016" PRIx64 " (udid: %s) disconnected\n", __func__, client->ecid, (client->udid) ? client->udid : "N/A");
+			}
 			if (event->mode == IRECV_K_PORT_DFU_MODE) {
 				// We have to reset the ECID here if a port DFU device disconnects,
 				// because when the device reconnects in a different mode, it will
@@ -344,6 +378,79 @@ static void irecv_event_cb(const irecv_device_event_t* event, void *userdata)
 }
 
 int build_identity_check_components_in_ipsw(plist_t build_identity, ipsw_archive_t ipsw);
+static int build_t1_combined_memboot(struct idevicerestore_client_t* client, plist_t build_identity, plist_t tss, const char* output_path);
+static int save_t1_preflight_pair(struct idevicerestore_client_t* client, plist_t build_identity);
+static int run_t1_phase14(struct idevicerestore_client_t* client);
+
+static int env_enabled(const char* name)
+{
+	const char* value = getenv(name);
+	return value && *value && strcmp(value, "0") != 0;
+}
+
+static int write_private_file_atomic(const char* path, const void* data, size_t size)
+{
+	char* temporary = NULL;
+	int fd = -1;
+	int result = -1;
+	const unsigned char* cursor = (const unsigned char*)data;
+	size_t remaining = size;
+
+	if (!path || !*path || (!data && size != 0)) {
+		return -1;
+	}
+	temporary = malloc(strlen(path) + sizeof(".tmp.XXXXXX"));
+	if (!temporary) {
+		return -1;
+	}
+	sprintf(temporary, "%s.tmp.XXXXXX", path);
+	fd = mkstemp(temporary);
+	if (fd < 0) {
+		logger(LL_ERROR, "Unable to create private temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	if (fchmod(fd, S_IRUSR | S_IWUSR) < 0) {
+		logger(LL_ERROR, "Unable to protect private temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	while (remaining > 0) {
+		ssize_t written = write(fd, cursor, remaining);
+		if (written < 0 && errno == EINTR) {
+			continue;
+		}
+		if (written <= 0) {
+			logger(LL_ERROR, "Unable to write private temporary file: %s\n", strerror(errno));
+			goto cleanup;
+		}
+		cursor += written;
+		remaining -= (size_t)written;
+	}
+	if (fsync(fd) < 0) {
+		logger(LL_ERROR, "Unable to sync private temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	if (close(fd) < 0) {
+		fd = -1;
+		logger(LL_ERROR, "Unable to close private temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	fd = -1;
+	if (rename(temporary, path) < 0) {
+		logger(LL_ERROR, "Unable to install private file atomically: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	result = 0;
+
+cleanup:
+	if (fd >= 0) {
+		close(fd);
+	}
+	if (result < 0 && temporary) {
+		unlink(temporary);
+	}
+	free(temporary);
+	return result;
+}
 
 int idevicerestore_start(struct idevicerestore_client_t* client)
 {
@@ -398,9 +505,9 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 			return -1;
 		}
 	}
+	mutex_unlock(&client->device_event_mutex);
 	idevicerestore_progress(client, RESTORE_STEP_DETECT, 0.1);
 	logger(LL_INFO, "Found device in %s mode\n", client->mode->string);
-	mutex_unlock(&client->device_event_mutex);
 
 	if (client->mode == MODE_WTF) {
 		unsigned int cpid = 0;
@@ -498,7 +605,11 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 		logger(LL_ERROR, "Unable to determine ECID\n");
 		return -1;
 	}
-	logger(LL_INFO, "ECID: %" PRIu64 "\n", client->ecid);
+	if (t1_privacy_mode()) {
+		logger(LL_INFO, "ECID: available (hidden for T1 privacy)\n");
+	} else {
+		logger(LL_INFO, "ECID: %" PRIu64 "\n", client->ecid);
+	}
 
 	idevicerestore_progress(client, RESTORE_STEP_DETECT, 0.2);
 	logger(LL_INFO, "Identified device as %s, %s\n", client->device->hardware_model, client->device->product_type);
@@ -689,7 +800,6 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 				logger(LL_ERROR, "Unable to exit restore mode\n");
 				return -2;
 			}
-
 			// we need to refresh the current mode again
 			mutex_lock(&client->device_event_mutex);
 			cond_wait_timeout(&client->device_event_cond, &client->device_event_mutex, 60000);
@@ -1047,6 +1157,27 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 
 	/* print information about current build identity */
 	build_identity_print_information(build_identity);
+	if (env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS")) {
+		if (client->mode != MODE_RECOVERY || !client->device ||
+				!client->device->product_type || !client->device->hardware_model ||
+				strcmp(client->device->product_type, "iBridge1,1") ||
+				strcmp(client->device->hardware_model, "x619ap")) {
+			logger(LL_ERROR, "T1 EmbeddedOS phase 11 is guarded for x619ap in recovery mode only\n");
+			return -1;
+		}
+	}
+
+	/* Phase 14 is an ApBootstrapOnly recovery transaction. It deliberately
+	 * runs before TSS acquisition and before the normal iBEC path: the T1 must
+	 * receive the exact ticket/image pair captured during the preceding
+	 * successful phase-11 preflight, without replacing either artifact. */
+	if (env_enabled("IDEVICERESTORE_T1_PHASE14")) {
+		if (env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS")) {
+			logger(LL_ERROR, "T1 phase 11 and phase 14 cannot run in the same invocation\n");
+			return -1;
+		}
+		return run_t1_phase14(client);
+	}
 
 	if (client->macos_variant) {
 		logger(LL_INFO, "Performing macOS restore\n");
@@ -1120,8 +1251,11 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 	/* Get OS (filesystem) name from build identity */
 	char* os_path = NULL;
 	if (build_identity_get_component_path(build_identity, "OS", &os_path) < 0) {
-		logger(LL_ERROR, "Unable to get path for filesystem component\n");
-		return -1;
+		/* T1 embeddedOS manifests name the customer filesystem OSRamdisk. */
+		if (build_identity_get_component_path(build_identity, "OSRamdisk", &os_path) < 0) {
+			logger(LL_ERROR, "Unable to get path for filesystem component\n");
+			return -1;
+		}
 	}
 
 	/* check if IPSW has OS component 'stored' in ZIP archive, otherwise we need to extract it */
@@ -1247,7 +1381,11 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 					const char* sep_nonce = plist_get_data_ptr(p_sep_nonce, &sep_nonce_size);
 					if (sep_nonce) {
 						logger(LL_INFO, "Getting SepNonce in normal mode... ");
-						logger_dump_hex(LL_INFO, sep_nonce, sep_nonce_size);
+						if (!t1_privacy_mode()) {
+							logger_dump_hex(LL_INFO, sep_nonce, sep_nonce_size);
+						} else {
+							logger(LL_INFO, "SepNonce: available (hidden for T1 privacy)\n");
+						}
 					}
 					plist_free(ap_params);
 				}
@@ -1373,6 +1511,22 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 		/* fix empty dicts */
 		fixup_tss(client->tss);
 	}
+
+	if (env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS")) {
+		const char* memboot_save = getenv("IDEVICERESTORE_T1_PREFLIGHT_MEMBOOT_SAVE");
+		const char* ticket_save = getenv("IDEVICERESTORE_T1_PREFLIGHT_TICKET_SAVE");
+		if ((memboot_save && *memboot_save) != (ticket_save && *ticket_save)) {
+			logger(LL_ERROR, "T1 preflight capture requires both output paths\n");
+			return -1;
+		}
+		if (memboot_save && *memboot_save) {
+			if (!client->tss || save_t1_preflight_pair(client, build_identity) < 0) {
+				logger(LL_ERROR, "Unable to save the T1 preflight-personalized pair\n");
+				return -1;
+			}
+		}
+	}
+
 	idevicerestore_progress(client, RESTORE_STEP_PREPARE, 0.25);
 	if (client->flags & FLAG_QUIT) {
 		return -1;
@@ -1464,6 +1618,7 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 		}
 		mutex_unlock(&client->device_event_mutex);
 	}
+
 	idevicerestore_progress(client, RESTORE_STEP_PREPARE, 0.5);
 	if (client->flags & FLAG_QUIT) {
 		return -1;
@@ -2142,7 +2297,11 @@ int get_ap_nonce(struct idevicerestore_client_t* client, unsigned char** nonce, 
 		return -1;
 	}
 
-	logger_dump_hex(LL_INFO, *nonce, *nonce_size);
+	if (!t1_privacy_mode()) {
+		logger_dump_hex(LL_INFO, *nonce, *nonce_size);
+	} else {
+		logger(LL_INFO, "available (hidden for T1 privacy)\n");
+	}
 
 	return 0;
 }
@@ -2187,7 +2346,11 @@ int get_sep_nonce(struct idevicerestore_client_t* client, unsigned char** nonce,
 		return -1;
 	}
 
-	logger_dump_hex(LL_INFO, *nonce, *nonce_size);
+	if (!t1_privacy_mode()) {
+		logger_dump_hex(LL_INFO, *nonce, *nonce_size);
+	} else {
+		logger(LL_INFO, "available (hidden for T1 privacy)\n");
+	}
 
 	return 0;
 }
@@ -2809,7 +2972,7 @@ int build_manifest_get_identity_count(plist_t build_manifest)
 
 int extract_component(ipsw_archive_t ipsw, const char* path, void** component_data, size_t* component_size)
 {
-	char* component_name = NULL;
+	const char* component_name = NULL;
 	if (!ipsw || !path || !component_data || !component_size) {
 		return -1;
 	}
@@ -2827,6 +2990,251 @@ int extract_component(ipsw_archive_t ipsw, const char* path, void** component_da
 	}
 
 	return 0;
+}
+
+/*
+ * A T1 combined.memboot is the four normal-boot IMG4 objects concatenated in
+ * manifest order.  macOS normally creates this file in the ESP; exposing the
+ * operation here lets a Linux host rebuild it from the same device-specific
+ * TSS response idevicerestore already fetched.
+ */
+static int build_t1_combined_memboot(struct idevicerestore_client_t* client, plist_t build_identity, plist_t tss, const char* output_path)
+{
+	static const char* components[] = {
+		"OSRamdisk", "KernelCache", "DeviceTree", "SEP", NULL
+	};
+	FILE* output = NULL;
+	char* temporary = NULL;
+	int output_fd = -1;
+	int result = -1;
+
+	if (!client || !build_identity || !tss || !output_path || !*output_path) {
+		return -1;
+	}
+
+	temporary = malloc(strlen(output_path) + sizeof(".tmp.XXXXXX"));
+	if (!temporary) {
+		return -1;
+	}
+	sprintf(temporary, "%s.tmp.XXXXXX", output_path);
+	output_fd = mkstemp(temporary);
+	if (output_fd < 0) {
+		logger(LL_ERROR, "Unable to create T1 memboot temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	if (fchmod(output_fd, S_IRUSR | S_IWUSR) < 0) {
+		logger(LL_ERROR, "Unable to protect T1 memboot temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	output = fdopen(output_fd, "wb");
+	if (!output) {
+		logger(LL_ERROR, "Unable to open T1 memboot temporary stream: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	output_fd = -1;
+
+	for (int i = 0; components[i]; i++) {
+		const char* component = components[i];
+		char* path = NULL;
+		void* source = NULL;
+		size_t source_size = 0;
+		void* personalized = NULL;
+		size_t personalized_size = 0;
+
+		if (build_identity_get_component_path(build_identity, component, &path) < 0) {
+			logger(LL_ERROR, "Unable to find %s while building T1 memboot\n", component);
+			goto cleanup;
+		}
+		if (extract_component(client->ipsw, path, &source, &source_size) < 0) {
+			free(path);
+			goto cleanup;
+		}
+		free(path);
+		if (personalize_component(client, component, source, source_size, tss,
+				&personalized, &personalized_size) < 0) {
+			free(source);
+			goto cleanup;
+		}
+		free(source);
+		if (fwrite(personalized, 1, personalized_size, output) != personalized_size) {
+			logger(LL_ERROR, "Short write while appending %s to T1 memboot\n", component);
+			free(personalized);
+			goto cleanup;
+		}
+		logger(LL_INFO, "Appended %s (%zu bytes) to T1 combined.memboot\n", component, personalized_size);
+		free(personalized);
+	}
+
+	if (fflush(output) != 0) {
+		logger(LL_ERROR, "Unable to flush T1 memboot output: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	if (fsync(fileno(output)) < 0) {
+		logger(LL_ERROR, "Unable to sync T1 memboot output: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	if (fclose(output) != 0) {
+		output = NULL;
+		logger(LL_ERROR, "Unable to close T1 memboot output: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	output = NULL;
+	if (rename(temporary, output_path) < 0) {
+		logger(LL_ERROR, "Unable to install T1 memboot atomically: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	result = 0;
+	logger(LL_INFO, "Built private T1 combined.memboot\n");
+
+cleanup:
+	if (output) {
+		fclose(output);
+	}
+	if (output_fd >= 0) {
+		close(output_fd);
+	}
+	if (result < 0) {
+		unlink(temporary);
+	}
+	free(temporary);
+	return result;
+}
+
+static int save_t1_preflight_pair(struct idevicerestore_client_t* client, plist_t build_identity)
+{
+	const char* memboot_path = getenv("IDEVICERESTORE_T1_PREFLIGHT_MEMBOOT_SAVE");
+	const char* ticket_path = getenv("IDEVICERESTORE_T1_PREFLIGHT_TICKET_SAVE");
+	unsigned char* ticket = NULL;
+	unsigned int ticket_size = 0;
+	int result = -1;
+
+	if (!memboot_path || !*memboot_path || !ticket_path || !*ticket_path ||
+			!strcmp(memboot_path, ticket_path)) {
+		logger(LL_ERROR, "Invalid T1 preflight output paths\n");
+		return -1;
+	}
+	if (build_t1_combined_memboot(client, build_identity, client->tss, memboot_path) < 0) {
+		return -1;
+	}
+	if (tss_response_get_ap_img4_ticket(client->tss, &ticket, &ticket_size) < 0 ||
+			!ticket || ticket_size == 0) {
+		logger(LL_ERROR, "T1 preflight response has no AP ticket\n");
+		goto cleanup;
+	}
+	if (write_private_file_atomic(ticket_path, ticket, ticket_size) < 0) {
+		goto cleanup;
+	}
+	result = 0;
+	logger(LL_INFO, "Saved T1 preflight-personalized image and matching AP ticket\n");
+
+cleanup:
+	free(ticket);
+	if (result < 0) {
+		unlink(memboot_path);
+		unlink(ticket_path);
+	}
+	return result;
+}
+
+static int run_t1_phase14(struct idevicerestore_client_t* client)
+{
+	const char* memboot_path = getenv("IDEVICERESTORE_MEMBOOT_FILE");
+	const char* ticket_path = getenv("IDEVICERESTORE_T1_APTICKET_FILE");
+	const char* boot_args = getenv("IDEVICERESTORE_RESTORE_BOOT_ARGS");
+	struct stat memboot_stat;
+	struct stat ticket_stat;
+	unsigned char* ticket = NULL;
+	size_t ticket_size = 0;
+	char boot_args_command[128];
+	irecv_error_t error;
+	int result = -1;
+
+	if (!client || client->mode != MODE_RECOVERY) {
+		logger(LL_ERROR, "T1 phase 14 requires a device in recovery mode\n");
+		return -1;
+	}
+	if (!client->device || !client->device->product_type || !client->device->hardware_model ||
+			strcmp(client->device->product_type, "iBridge1,1") ||
+			strcmp(client->device->hardware_model, "x619ap")) {
+		logger(LL_ERROR, "T1 phase 14 is guarded for iBridge1,1/x619ap only\n");
+		return -1;
+	}
+	if (!memboot_path || !*memboot_path || !ticket_path || !*ticket_path) {
+		logger(LL_ERROR, "T1 phase 14 requires an exact memboot file and AP ticket file\n");
+		return -1;
+	}
+	if (!boot_args || strcmp(boot_args, "rd=md0")) {
+		logger(LL_ERROR, "T1 phase 14 requires the exact non-restore boot arguments rd=md0\n");
+		return -1;
+	}
+	if (lstat(memboot_path, &memboot_stat) < 0 || !S_ISREG(memboot_stat.st_mode) ||
+			memboot_stat.st_size < (8 * 1024 * 1024) || memboot_stat.st_size > (128 * 1024 * 1024)) {
+		logger(LL_ERROR, "T1 phase-14 memboot file is missing or has an invalid size\n");
+		return -1;
+	}
+	if (lstat(ticket_path, &ticket_stat) < 0 || !S_ISREG(ticket_stat.st_mode) ||
+			ticket_stat.st_size <= 0 || ticket_stat.st_size > (4 * 1024 * 1024)) {
+		logger(LL_ERROR, "T1 phase-14 AP ticket file is missing or has an invalid size\n");
+		return -1;
+	}
+	if ((memboot_stat.st_mode & 077) != 0 || (ticket_stat.st_mode & 077) != 0) {
+		logger(LL_ERROR, "T1 phase-14 artifacts must not be accessible by group or other users\n");
+		return -1;
+	}
+	if (read_file(ticket_path, (void**)&ticket, &ticket_size) < 0 || ticket_size == 0) {
+		logger(LL_ERROR, "Unable to read the saved T1 AP ticket\n");
+		goto cleanup;
+	}
+	/* Device discovery/Image4 probing may already own the recovery handle.
+	 * Reopening the same internal USB device here deadlocks on Linux; reuse the
+	 * live handle exactly as Apple's phase-14 operation does. */
+	if (!client->recovery || !client->recovery->client) {
+		if (recovery_client_new(client) < 0) {
+			logger(LL_ERROR, "Unable to connect for T1 phase 14\n");
+			goto cleanup;
+		}
+	} else {
+		logger(LL_INFO, "Reusing the active T1 recovery handle for phase 14\n");
+	}
+
+	logger(LL_INFO, "Starting T1 phase-14 exact preflight replay\n");
+	if (recovery_set_autoboot(client, 0) < 0) {
+		goto cleanup;
+	}
+	error = irecv_send_buffer(client->recovery->client, ticket, ticket_size, 0);
+	if (error != IRECV_E_SUCCESS) {
+		logger(LL_ERROR, "Unable to upload the saved T1 AP ticket: %s\n", irecv_strerror(error));
+		goto cleanup;
+	}
+	error = irecv_send_command(client->recovery->client, "ticket");
+	if (error != IRECV_E_SUCCESS) {
+		logger(LL_ERROR, "Unable to install the saved T1 AP ticket: %s\n", irecv_strerror(error));
+		goto cleanup;
+	}
+	logger(LL_INFO, "Uploading exact T1 preflight image (%lld bytes)\n", (long long)memboot_stat.st_size);
+	error = irecv_send_file(client->recovery->client, memboot_path, 0);
+	if (error != IRECV_E_SUCCESS) {
+		logger(LL_ERROR, "Unable to upload the exact T1 preflight image: %s\n", irecv_strerror(error));
+		goto cleanup;
+	}
+	snprintf(boot_args_command, sizeof(boot_args_command), "setenv boot-args %s", boot_args);
+	error = irecv_send_command(client->recovery->client, boot_args_command);
+	if (error != IRECV_E_SUCCESS) {
+		logger(LL_ERROR, "Unable to set T1 phase-14 boot arguments: %s\n", irecv_strerror(error));
+		goto cleanup;
+	}
+	error = irecv_send_command_breq(client->recovery->client, "memboot", 1);
+	if (error != IRECV_E_SUCCESS) {
+		logger(LL_ERROR, "Unable to dispatch T1 phase-14 memboot: %s\n", irecv_strerror(error));
+		goto cleanup;
+	}
+	logger(LL_INFO, "T1 phase-14 memboot dispatched with USB bRequest=1\n");
+	result = 0;
+
+cleanup:
+	free(ticket);
+	recovery_client_free(client);
+	return result;
 }
 
 int personalize_component(struct idevicerestore_client_t* client, const char *component_name, const void* component_data, size_t component_size, plist_t tss_response, void** personalized_component, size_t* personalized_component_size)

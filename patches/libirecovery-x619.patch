@@ -1,0 +1,14 @@
+diff --git a/src/libirecovery.c b/src/libirecovery.c
+index fc11d88..1b3d657 100644
+--- a/src/libirecovery.c
++++ b/src/libirecovery.c
+@@ -485,7 +485,8 @@ static struct irecv_device irecv_devices[] = {
+ 	{ "Mac17,9",        "j714sap", 0x08, 0x6050, "MacBook Pro (14-inch, M5 Pro, 2026)" },
+ 	/* Apple Silicon VMs (supported by Virtualization.framework on macOS 12) */
+ 	{ "VirtualMac2,1",  "vma2macosap",  0x20, 0xFE00, "Apple Virtual Machine 1" },
+-	/* Apple T2 Coprocessor */
++	/* Apple T1/T2 Coprocessors */
++	{ "iBridge1,1",  "x619ap",   0x12, 0x8002, "Apple T1 MacBook Pro Touch Bar (x619)" },
+ 	{ "iBridge2,1",	 "j137ap",   0x0A, 0x8012, "Apple T2 iMacPro1,1 (j137)" },
+ 	{ "iBridge2,3",	 "j680ap",   0x0B, 0x8012, "Apple T2 MacBookPro15,1 (j680)" },
+ 	{ "iBridge2,4",	 "j132ap",   0x0C, 0x8012, "Apple T2 MacBookPro15,2 (j132)" },

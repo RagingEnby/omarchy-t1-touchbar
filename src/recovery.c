@@ -94,7 +94,11 @@ int recovery_client_new(struct idevicerestore_client_t* client)
 		const struct irecv_device_info *device_info = irecv_get_device_info(recovery);
 		if (device_info && device_info->srnm) {
 			client->srnm = strdup(device_info->srnm);
-			logger(LL_INFO, "INFO: device serial number is %s\n", client->srnm);
+			if (getenv("IDEVICERESTORE_T1_EMBEDDEDOS") || getenv("IDEVICERESTORE_T1_PHASE14")) {
+				logger(LL_INFO, "INFO: T1 serial number is available but was not printed\n");
+			} else {
+				logger(LL_INFO, "INFO: device serial number is %s\n", client->srnm);
+			}
 		}
 	}
 
@@ -124,11 +128,28 @@ int recovery_set_autoboot(struct idevicerestore_client_t* client, int enable)
 
 int recovery_enter_restore(struct idevicerestore_client_t* client, plist_t build_identity)
 {
-    if (client->macos_variant) {
-        client->restore_boot_args = strdup("rd=md0 nand-enable-reformat=1 -progress -restore");
-    } else if (client->build_major >= 8) {
-        client->restore_boot_args = strdup("rd=md0 nand-enable-reformat=1 -progress");
-    }
+	const char* restore_boot_args_override = getenv("IDEVICERESTORE_RESTORE_BOOT_ARGS");
+	const char* t1_restore_boot_args = "rd=md0 -restore IOUSBDeviceController-configuration=standardMuxOnly";
+	if (client->restore_boot_args) {
+		free(client->restore_boot_args);
+		client->restore_boot_args = NULL;
+	}
+	if (restore_boot_args_override && *restore_boot_args_override) {
+		if (!getenv("IDEVICERESTORE_T1_EMBEDDEDOS") || strcmp(restore_boot_args_override, t1_restore_boot_args)) {
+			logger(LL_ERROR, "Restore boot-argument override is restricted to the guarded T1 phase-11 value\n");
+			return -1;
+		}
+		client->restore_boot_args = strdup(restore_boot_args_override);
+		logger(LL_INFO, "Using guarded T1 phase-11 restore boot arguments\n");
+	} else if (client->macos_variant) {
+		client->restore_boot_args = strdup("rd=md0 nand-enable-reformat=1 -progress -restore");
+	} else if (client->build_major >= 8) {
+		client->restore_boot_args = strdup("rd=md0 nand-enable-reformat=1 -progress");
+	}
+	if ((restore_boot_args_override && *restore_boot_args_override) && !client->restore_boot_args) {
+		logger(LL_ERROR, "Unable to allocate restore boot arguments\n");
+		return -1;
+	}
 
 	/* upload data to make device boot restore mode */
 
@@ -596,4 +617,3 @@ int recovery_send_reset(struct idevicerestore_client_t* client)
 	irecv_send_command_breq(client->recovery->client, "reset", 1);
 	return 0;
 }
-

@@ -29,6 +29,9 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include <libgen.h>
 #include <math.h>
 #include <libimobiledevice/restore.h>
@@ -78,6 +81,132 @@
 #define EXEC_IBOOT                    31
 #define FINALIZE_NAND_EPOCH_UPDATE    32
 #define CHECK_INAPPR_BOOT_PARTITIONS  33
+
+static int restore_env_enabled(const char* name)
+{
+	const char* value = getenv(name);
+	return value && *value && strcmp(value, "0") != 0;
+}
+
+static const char* t1_fdr_input_path(void)
+{
+	const char* path = getenv("IDEVICERESTORE_T1_FDR_INPUT");
+	if (!restore_env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS")) {
+		return NULL;
+	}
+	return (path && *path) ? path : NULL;
+}
+
+static int load_t1_fdr_memory_store(plist_t* memory_store)
+{
+	const char* path = t1_fdr_input_path();
+	struct stat file_stat;
+	char* contents = NULL;
+	size_t contents_size = 0;
+	plist_t parsed = NULL;
+
+	if (!memory_store || !path) {
+		return -1;
+	}
+	*memory_store = NULL;
+	if (lstat(path, &file_stat) < 0 || !S_ISREG(file_stat.st_mode) ||
+			file_stat.st_size <= 0 || file_stat.st_size > (16 * 1024 * 1024)) {
+		logger(LL_ERROR, "The private T1 FDR input is missing, non-regular, or an invalid size\n");
+		return -1;
+	}
+	if ((file_stat.st_mode & 077) != 0) {
+		logger(LL_ERROR, "The private T1 FDR input must not be accessible by group or other users\n");
+		return -1;
+	}
+	if (read_file(path, (void**)&contents, &contents_size) < 0) {
+		logger(LL_ERROR, "Unable to read the private T1 FDR memory store\n");
+		return -1;
+	}
+	plist_from_memory(contents, contents_size, &parsed, NULL);
+	free(contents);
+	if (!parsed || plist_get_node_type(parsed) != PLIST_DICT) {
+		logger(LL_ERROR, "The private T1 FDR memory store is not a plist dictionary\n");
+		plist_free(parsed);
+		return -1;
+	}
+	*memory_store = parsed;
+	return 0;
+}
+
+static int write_private_plist_atomic(const char* path, plist_t value)
+{
+	char* serialized = NULL;
+	uint32_t serialized_size = 0;
+	char* temporary = NULL;
+	const char* cursor;
+	size_t remaining;
+	int fd = -1;
+	int result = -1;
+
+	if (!path || !*path || !value) {
+		return -1;
+	}
+	plist_to_bin(value, &serialized, &serialized_size);
+	if (!serialized || serialized_size == 0) {
+		logger(LL_ERROR, "Unable to serialize the T1 FDR memory store\n");
+		goto cleanup;
+	}
+	temporary = malloc(strlen(path) + sizeof(".tmp.XXXXXX"));
+	if (!temporary) {
+		goto cleanup;
+	}
+	sprintf(temporary, "%s.tmp.XXXXXX", path);
+	fd = mkstemp(temporary);
+	if (fd < 0) {
+		logger(LL_ERROR, "Unable to create private FDR temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	if (fchmod(fd, S_IRUSR | S_IWUSR) < 0) {
+		logger(LL_ERROR, "Unable to protect private FDR temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	cursor = serialized;
+	remaining = serialized_size;
+	while (remaining > 0) {
+		ssize_t written = write(fd, cursor, remaining);
+		if (written < 0 && errno == EINTR) {
+			continue;
+		}
+		if (written <= 0) {
+			logger(LL_ERROR, "Unable to write private FDR temporary file: %s\n", strerror(errno));
+			goto cleanup;
+		}
+		cursor += written;
+		remaining -= (size_t)written;
+	}
+	if (fsync(fd) < 0) {
+		logger(LL_ERROR, "Unable to sync private FDR temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	if (close(fd) < 0) {
+		fd = -1;
+		logger(LL_ERROR, "Unable to close private FDR temporary file: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	fd = -1;
+	if (rename(temporary, path) < 0) {
+		logger(LL_ERROR, "Unable to install private FDR store atomically: %s\n", strerror(errno));
+		goto cleanup;
+	}
+	logger(LL_INFO, "Saved T1 FDR memory store (%u bytes)\n", serialized_size);
+	result = 0;
+
+cleanup:
+	if (fd >= 0) {
+		close(fd);
+	}
+	if (result < 0 && temporary) {
+		unlink(temporary);
+	}
+	free(temporary);
+	free(serialized);
+	return result;
+}
 #define CREATE_FACTORY_RESTORE_MARKER 34
 #define LOAD_FIRMWARE                 35
 #define REQUESTING_FUD_DATA           36
@@ -1031,8 +1160,12 @@ int restore_send_filesystem(struct idevicerestore_client_t* client, plist_t mess
 	logger(LL_INFO, "About to send filesystem...\n");
 
 	if (build_identity_get_component_path(client->restore->build_identity, "OS", &fsname) < 0) {
-		logger(LL_ERROR, "Unable to get path for filesystem component\n");
-		return -1;
+		/* T1 embeddedOS manifests name the customer filesystem OSRamdisk. */
+		if (!restore_env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS") ||
+				build_identity_get_component_path(client->restore->build_identity, "OSRamdisk", &fsname) < 0) {
+			logger(LL_ERROR, "Unable to get path for filesystem component\n");
+			return -1;
+		}
 	}
 	if (client->filesystem) {
 		char* path = strdup(client->filesystem);
@@ -1139,6 +1272,7 @@ int restore_send_recovery_os_root_ticket(struct idevicerestore_client_t* client,
 	restore_service_client_t service = _restore_get_service_client_for_data_request(client, message);
 	if (!service) {
 		logger(LL_ERROR, "%s: Unable to connect to service client\n", __func__);
+		plist_free(dict);
 		return -1;
 	}
 
@@ -1196,9 +1330,22 @@ int restore_send_root_ticket(struct idevicerestore_client_t* client, plist_t mes
 		free(data);
 	}
 
+	if (t1_fdr_input_path()) {
+		plist_t fdr_memory_store = NULL;
+		if (load_t1_fdr_memory_store(&fdr_memory_store) < 0) {
+			plist_free(dict);
+			return -1;
+		}
+		/* T1 restored consumes the replay store in the RootTicket response.
+		 * Sending it later with FDRTrustData is too late for phase-11 state. */
+		plist_dict_set_item(dict, "FDRMemoryStoreData", fdr_memory_store);
+		logger(LL_INFO, "Attached the private T1 FDR memory store to RootTicket\n");
+	}
+
 	restore_service_client_t service = _restore_get_service_client_for_data_request(client, message);
 	if (!service) {
 		logger(LL_ERROR, "%s: Unable to connect to service client\n", __func__);
+		plist_free(dict);
 		return -1;
 	}
 
@@ -2425,14 +2572,35 @@ int restore_send_fdr_trust_data(struct idevicerestore_client_t* client, plist_t 
 
 	logger(LL_INFO, "About to send FDR Trust data...\n");
 
-	// FIXME: What should we send here?
-	/* Sending an empty dict makes it continue with FDR
-	 * and this is what iTunes seems to be doing too */
-	dict = plist_new_dict();
+	if (t1_fdr_input_path()) {
+		plist_t fdr_memory_store = NULL;
+		plist_t fdr_trust_object = NULL;
+
+		if (load_t1_fdr_memory_store(&fdr_memory_store) < 0) {
+			return -1;
+		}
+		fdr_trust_object = plist_dict_get_item(fdr_memory_store, "trustobject-current");
+		if (!fdr_trust_object || plist_get_node_type(fdr_trust_object) != PLIST_DATA) {
+			logger(LL_ERROR, "The private T1 FDR store has no trustobject-current data\n");
+			plist_free(fdr_memory_store);
+			return -1;
+		}
+
+		dict = plist_new_dict();
+		/* restored_external expects this value to be CFData. It copies the
+		 * trust object into its local and HTTP FDR clients itself. */
+		plist_dict_set_item(dict, "FDRTrustData", plist_copy(fdr_trust_object));
+		plist_free(fdr_memory_store);
+		logger(LL_INFO, "Loaded the device-specific T1 FDR trust object\n");
+	} else {
+		/* Generic restores historically send an empty dictionary here. */
+		dict = plist_new_dict();
+	}
 
 	restore_service_client_t service = _restore_get_service_client_for_data_request(client, message);
 	if (!service) {
 		logger(LL_ERROR, "%s: Unable to connect to service client\n", __func__);
+		plist_free(dict);
 		return -1;
 	}
 
@@ -2447,6 +2615,52 @@ int restore_send_fdr_trust_data(struct idevicerestore_client_t* client, plist_t 
 
 	logger(LL_INFO, "Done sending FDR Trust Data\n");
 
+	return 0;
+}
+
+int restore_send_fdr_memory_commit(struct idevicerestore_client_t* client, plist_t message)
+{
+	restored_error_t restore_error;
+	plist_t dict = plist_new_dict();
+	plist_t arguments;
+	plist_t memory_store;
+	const char* output_path = restore_env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS")
+		? getenv("IDEVICERESTORE_T1_FDR_OUTPUT") : NULL;
+	restore_service_client_t service;
+
+	logger(LL_INFO, "Acknowledging FDR memory-store commit...\n");
+	if (output_path && *output_path) {
+		arguments = plist_dict_get_item(message, "Arguments");
+		memory_store = arguments ? plist_dict_get_item(arguments, "FDRMemoryStoreData") : NULL;
+		if (!memory_store) {
+			memory_store = plist_dict_get_item(message, "FDRMemoryStoreData");
+		}
+		if (!memory_store || plist_get_node_type(memory_store) != PLIST_DICT) {
+			logger(LL_ERROR, "FDRMemoryCommit did not contain a T1 memory-store dictionary\n");
+			plist_free(dict);
+			return -1;
+		}
+		if (write_private_plist_atomic(output_path, memory_store) < 0) {
+			plist_free(dict);
+			return -1;
+		}
+	}
+	service = _restore_get_service_client_for_data_request(client, message);
+	if (!service) {
+		logger(LL_ERROR, "%s: Unable to connect to service client\n", __func__);
+		plist_free(dict);
+		return -1;
+	}
+
+	/* restored_external only checks that a response plist was received. */
+	restore_error = _restore_service_send(service, dict, 0);
+	plist_free(dict);
+	_restore_service_free(service);
+	if (restore_error != RESTORE_E_SUCCESS) {
+		logger(LL_ERROR, "Unable to acknowledge FDR memory-store commit (%d)\n", restore_error);
+		return -1;
+	}
+	logger(LL_INFO, "Done acknowledging FDR memory-store commit\n");
 	return 0;
 }
 
@@ -4923,6 +5137,13 @@ logger(LL_DEBUG, "%s: type = %s\n", __func__, type);
 			}
 		}
 
+		else if (!strcmp(type, "FDRMemoryCommit")) {
+			if (restore_send_fdr_memory_commit(client, message) < 0) {
+				logger(LL_ERROR, "Unable to acknowledge FDR memory-store commit\n");
+				return -1;
+			}
+		}
+
 		else if (!strcmp(type, "FUDData")) {
 			if(restore_send_image_data(client, message, "FUDImageList", "IsFUDFirmware", "FUDImageData") < 0) {
 				logger(LL_ERROR, "Unable to send FUD data\n");
@@ -5297,6 +5518,7 @@ static int restore_wait_for_reconnect(struct idevicerestore_client_t* client)
 int restore_device(struct idevicerestore_client_t* client, plist_t build_identity)
 {
 	int err = 0;
+	int t1_embeddedos = restore_env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS");
 	char* type = NULL;
 	plist_t node = NULL;
 	plist_t message = NULL;
@@ -5316,7 +5538,11 @@ int restore_device(struct idevicerestore_client_t* client, plist_t build_identit
 		logger(LL_ERROR, "Unable to open device in restore mode\n");
 		return (err == -2) ? -1: -2;
 	}
-	logger(LL_INFO, "Device %s has successfully entered restore mode\n", client->udid);
+	if (t1_embeddedos) {
+		logger(LL_INFO, "T1 has successfully entered restore mode\n");
+	} else {
+		logger(LL_INFO, "Device %s has successfully entered restore mode\n", client->udid);
+	}
 
 	client->restore->build_identity = build_identity;
 	restore = client->restore->client;
@@ -5343,7 +5569,9 @@ int restore_device(struct idevicerestore_client_t* client, plist_t build_identit
 		node = plist_dict_get_item(hwinfo, "UniqueChipID");
 		if (node && plist_get_node_type(node) == PLIST_UINT) {
 			plist_get_uint_val(node, &i);
-			logger(LL_INFO, "UniqueChipID: %" PRIu64 "\n", i);
+			if (!t1_embeddedos) {
+				logger(LL_INFO, "UniqueChipID: %" PRIu64 "\n", i);
+			}
 		}
 
 		node = plist_dict_get_item(hwinfo, "ProductionMode");
@@ -5369,7 +5597,11 @@ int restore_device(struct idevicerestore_client_t* client, plist_t build_identit
 		node = plist_dict_get_item(hwinfo, "USBLog");
 		if (node && plist_get_node_type(node) == PLIST_STRING) {
 			plist_get_string_val(node, &sval);
-			logger(LL_INFO, "USB log is available:\n%s\n", sval);
+			if (t1_embeddedos) {
+				logger(LL_INFO, "T1 USB log is available in restored but was not printed\n");
+			} else {
+				logger(LL_INFO, "USB log is available:\n%s\n", sval);
+			}
 			free(sval);
 			sval = NULL;
 		}
@@ -5377,7 +5609,11 @@ int restore_device(struct idevicerestore_client_t* client, plist_t build_identit
 		node = plist_dict_get_item(hwinfo, "PanicLog");
 		if (node && plist_get_node_type(node) == PLIST_STRING) {
 			plist_get_string_val(node, &sval);
-			logger(LL_INFO, "Panic log is available:\n%s\n", sval);
+			if (t1_embeddedos) {
+				logger(LL_INFO, "T1 panic log is available in restored but was not printed\n");
+			} else {
+				logger(LL_INFO, "Panic log is available:\n%s\n", sval);
+			}
 			free(sval);
 			sval = NULL;
 		}
@@ -5588,26 +5824,74 @@ int restore_device(struct idevicerestore_client_t* client, plist_t build_identit
 	}
 	plist_dict_set_item(opts, "CreateFilesystemPartitions", plist_new_bool(1));
 	plist_dict_set_item(opts, "SystemImage", plist_new_bool(1));
+	if (t1_embeddedos) {
+		const char* fdr_output = getenv("IDEVICERESTORE_T1_FDR_OUTPUT");
+		const char* fdr_input = t1_fdr_input_path();
+		const char* required_boot_args = "rd=md0 -restore IOUSBDeviceController-configuration=standardMuxOnly";
+		if (!fdr_output || !*fdr_output) {
+			logger(LL_ERROR, "T1 EmbeddedOS phase 11 requires a private FDR output path\n");
+			plist_free(opts);
+			restore_client_free(client);
+			return -1;
+		}
+		if (!client->restore_boot_args || strcmp(client->restore_boot_args, required_boot_args)) {
+			logger(LL_ERROR, "T1 EmbeddedOS phase 11 requires the exact safe restore boot arguments\n");
+			plist_free(opts);
+			restore_client_free(client);
+			return -1;
+		}
+		if (fdr_input && !strcmp(fdr_input, fdr_output)) {
+			logger(LL_ERROR, "T1 FDR input and output paths must be different\n");
+			plist_free(opts);
+			restore_client_free(client);
+			return -1;
+		}
+
+		/* Exact phase-11 contract used by EmbeddedOSInstall. This flashes only
+		 * the T1 NOR/provisioning state; it never requests or partitions a host
+		 * system image. Phase-14-only keys are intentionally absent. */
+		plist_dict_set_item(opts, "ApBootstrapOnly", plist_new_bool(0));
+		plist_dict_set_item(opts, "PersonalizedDuringPreflight", plist_new_bool(1));
+		plist_dict_set_item(opts, "FlashNOR", plist_new_bool(1));
+		plist_dict_set_item(opts, "ShouldRestoreSystemImage", plist_new_bool(0));
+		plist_dict_set_item(opts, "CreateFilesystemPartitions", plist_new_bool(0));
+		plist_dict_set_item(opts, "UpdateBaseband", plist_new_bool(0));
+		plist_dict_set_item(opts, "BootImageType", plist_new_string("UserOrInternal"));
+		plist_dict_set_item(opts, "FDRMemoryStorePath", plist_new_string("host-provided-memory-store"));
+		plist_dict_remove_item(opts, "SystemImage");
+		plist_dict_remove_item(opts, "SystemImageType");
+		plist_dict_remove_item(opts, "RootToInstall");
+		plist_dict_remove_item(opts, "BootImageTagOverride");
+		plist_dict_remove_item(opts, "AuthInstallRestoreBehavior");
+		plist_dict_remove_item(opts, "HostHasFixFor99053849");
+		plist_dict_remove_item(opts, "SystemImageFormat");
+		plist_dict_remove_item(opts, "SupportedDataTypes");
+		plist_dict_remove_item(opts, "SupportedMessageTypes");
+		plist_dict_remove_item(opts, "SupportedAsyncDataTypes");
+		plist_dict_remove_item(opts, "WaitForDeviceConnectionToFinishStateMachine");
+		logger(LL_INFO, "Using exact T1 phase-11 EmbeddedOS restore options (no host system image)\n");
+	}
 	if (client->restore_boot_args) {
 		plist_dict_set_item(opts, "RestoreBootArgs", plist_new_string(client->restore_boot_args));
 	}
-	plist_t spp = plist_access_path(build_identity, 2, "Info", "SystemPartitionPadding");
-	if (spp) {
-		spp = plist_copy(spp);
-	} else {
-		spp = plist_new_dict();
-		plist_dict_set_item(spp, "1024", plist_new_uint(1280));
-		plist_dict_set_item(spp, "128", plist_new_uint(1280));
-		plist_dict_set_item(spp, "16", plist_new_uint(160));
-		plist_dict_set_item(spp, "256", plist_new_uint(1280));
-		plist_dict_set_item(spp, "32", plist_new_uint(320));
-		plist_dict_set_item(spp, "512", plist_new_uint(1280));
-		plist_dict_set_item(spp, "64", plist_new_uint(640));
-		plist_dict_set_item(spp, "768", plist_new_uint(1280));
-		plist_dict_set_item(spp, "8", plist_new_uint(80));
+	if (!t1_embeddedos) {
+		plist_t spp = plist_access_path(build_identity, 2, "Info", "SystemPartitionPadding");
+		if (spp) {
+			spp = plist_copy(spp);
+		} else {
+			spp = plist_new_dict();
+			plist_dict_set_item(spp, "1024", plist_new_uint(1280));
+			plist_dict_set_item(spp, "128", plist_new_uint(1280));
+			plist_dict_set_item(spp, "16", plist_new_uint(160));
+			plist_dict_set_item(spp, "256", plist_new_uint(1280));
+			plist_dict_set_item(spp, "32", plist_new_uint(320));
+			plist_dict_set_item(spp, "512", plist_new_uint(1280));
+			plist_dict_set_item(spp, "64", plist_new_uint(640));
+			plist_dict_set_item(spp, "768", plist_new_uint(1280));
+			plist_dict_set_item(spp, "8", plist_new_uint(80));
+		}
+		plist_dict_set_item(opts, "SystemPartitionPadding", spp);
 	}
-	plist_dict_set_item(opts, "SystemPartitionPadding", spp);
-
 	// start the restore process
 	restore_error = restored_start_restore(restore, opts, client->restore->protocol_version);
 	if (restore_error != RESTORE_E_SUCCESS) {

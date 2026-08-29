@@ -1,0 +1,4 @@
+# Apple T1 production iBridge. Config 1 exposes the firmware Touch Bar HIDs
+# and camera; autosuspend is disabled because old teardown/resume paths are unsafe.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="8600", ATTR{bConfigurationValue}="1"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05ac", ATTR{idProduct}=="8600", TEST=="power/control", ATTR{power/control}="on"

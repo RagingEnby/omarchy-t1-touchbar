@@ -13,7 +13,6 @@ autom4te.cache/*
 m4/*
 swig/*
 *.swp
-*.patch
 *.diff
 aclocal.m4
 config.h
@@ -36,3 +35,22 @@ stamp-h1
 src/.libs
 src/idevicerestore
 src/idevicerestore.exe
+
+# Local T1 build/download workspace. Never commit its contents.
+/.t1-work/
+/build/
+/private/
+
+# T1 identity-bearing or Apple-proprietary artifacts.
+*.log
+*.shsh
+*.apticket
+*.memboot
+FDRData*
+*.plist.private
+*.img
+*.dmg
+*.pkg
+*.raw
+__pycache__/
+*.pyc
