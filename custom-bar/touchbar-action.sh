@@ -6,6 +6,18 @@ set -euo pipefail
 # Omarchy's CLI requires its packaged root even though it is already on PATH.
 export OMARCHY_PATH=${OMARCHY_PATH:-/usr/share/omarchy}
 
+log_action() {
+  logger --tag omarchy-t1-touchbar -- "$*" 2>/dev/null || true
+}
+
+on_error() {
+  local status=$?
+  log_action "action=${1:-unknown} failed status=$status"
+  exit "$status"
+}
+
+trap 'on_error "${1:-unknown}"' ERR
+
 load_hyprland_session() {
   local instances
   instances=$(hyprctl instances -j)
@@ -54,6 +66,7 @@ case ${1:-} in
     source_workspace=$2
     target_workspace=$3
     [[ $source_workspace != "$target_workspace" ]] || exit 0
+    log_action "workspace-merge start source=$source_workspace target=$target_workspace"
     mapfile -t workspace_windows < <(
       hyprctl clients -j | jq -r --argjson source "$source_workspace" \
         '.[] | select(.workspace.id == $source and .pinned != true) | .address'
@@ -62,6 +75,7 @@ case ${1:-} in
       hyprctl dispatch "hl.dsp.window.move({ workspace = \"$target_workspace\", follow = false, window = \"address:$window_address\" })"
     done
     hyprctl dispatch "hl.dsp.focus({ workspace = \"$target_workspace\" })"
+    log_action "workspace-merge complete source=$source_workspace target=$target_workspace windows=${#workspace_windows[@]}"
     ;;
   dictation-toggle) voxtype record toggle ;;
   gpt-open) focus_chatgpt ;;
