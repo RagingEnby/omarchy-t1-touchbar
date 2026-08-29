@@ -68,6 +68,7 @@ struct dfr_layout {
 #define DFR_GLYPH_VOLUP     "\U000F075D"
 #define DFR_GLYPH_BRDOWN    "\U000F00DE"
 #define DFR_GLYPH_BRUP      "\U000F00E0"
+#define DFR_GLYPH_MIC       "\U000F036C"
 
 #define DFR_COL_TEXT      0xFFF8FAFCu
 #define DFR_COL_ESC       0xFFFF5F57u
@@ -118,6 +119,7 @@ static const struct dfr_key dfr_keys_media[] = {
 	{ "GPT", 0, 1.25f, DFR_ACT_LAYER, "meta", DFR_IND_NONE, DFR_COL_CHATGPT },
 	{ "MEDIA", 0, 1.45f, DFR_ACT_LAYER, "alt", DFR_IND_NONE, DFR_COL_PLAY },
 	{ "OM", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-root", DFR_IND_NONE, DFR_COL_OMARCHY },
+	{ DFR_GLYPH_MIC, 0, 0.8f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action dictation-toggle", DFR_IND_NONE, DFR_COL_VOICE },
 };
 
 /* Ctrl+Fn: live status plus safe Omarchy system surfaces. */
@@ -143,12 +145,12 @@ static const struct dfr_key dfr_keys_alt[] = {
 	{ DFR_GLYPH_VOLUP, KEY_VOLUMEUP, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_VOL },
 };
 
-/* Command+Fn: AI and daily tools. F9 is deliberately a key rather than a
- * command so Omarchy's press=start/release=stop dictation semantics remain. */
+/* Command+Fn: AI and daily tools. VOICE calls Voxtype directly instead of
+ * synthesizing F9, which makes a quick tap a reliable start/stop toggle. */
 static const struct dfr_key dfr_keys_meta[] = {
 	{ "BACK", 0, 1.2f, DFR_ACT_LAYER, "media", DFR_IND_NONE, DFR_COL_ESC },
 	{ "OPEN", 0, 1.2f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-open", DFR_IND_NONE, DFR_COL_CHATGPT },
-	{ "HOLD VOICE", KEY_F9, 2.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_VOICE },
+	{ "VOICE", 0, 1.4f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action dictation-toggle", DFR_IND_NONE, DFR_COL_VOICE },
 	{ "NEW", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-new", DFR_IND_NONE, DFR_COL_CHATGPT },
 	{ "CMD", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-command", DFR_IND_NONE, DFR_COL_CHATGPT },
 	{ "CLIP", 0, 1.15f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-clipboard", DFR_IND_NONE, DFR_COL_ACTION },

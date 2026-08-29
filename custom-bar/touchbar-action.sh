@@ -49,6 +49,21 @@ case ${1:-} in
     [[ ${2:-} =~ ^([1-9]|10)$ ]] || exit 2
     hyprctl dispatch "hl.dsp.focus({ workspace = \"$2\" })"
     ;;
+  workspace-merge)
+    [[ ${2:-} =~ ^([1-9]|10)$ && ${3:-} =~ ^([1-9]|10)$ ]] || exit 2
+    source_workspace=$2
+    target_workspace=$3
+    [[ $source_workspace != "$target_workspace" ]] || exit 0
+    mapfile -t workspace_windows < <(
+      hyprctl clients -j | jq -r --argjson source "$source_workspace" \
+        '.[] | select(.workspace.id == $source and .pinned != true) | .address'
+    )
+    for window_address in "${workspace_windows[@]}"; do
+      hyprctl dispatch "hl.dsp.window.move({ workspace = \"$target_workspace\", follow = false, window = \"address:$window_address\" })"
+    done
+    hyprctl dispatch "hl.dsp.focus({ workspace = \"$target_workspace\" })"
+    ;;
+  dictation-toggle) voxtype record toggle ;;
   gpt-open) focus_chatgpt ;;
   gpt-new) send_chatgpt_key N ;;
   gpt-command) send_chatgpt_key K ;;

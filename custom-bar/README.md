@@ -14,7 +14,7 @@ Internal layout names are retained for compatibility with upstream `dfr-fnd`:
 
 | Gesture | Internal name | Visible row |
 |---|---|---|
-| default | `media` | Esc, workspaces 1-10, GPT menu, media menu, Omarchy |
+| default | `media` | Esc, workspaces 1-10, GPT, media, Omarchy, dictation |
 | Fn | `fn` | Esc and F1-F12 |
 | Ctrl+Fn | `ctrl` | status and system actions |
 | MEDIA button | `alt` | Back, brightness, playback and volume |
@@ -30,6 +30,17 @@ The home row reads Hyprland's local IPC state every 400 ms. Workspace buttons
 with one or more app windows get a filled cyan background, bright outline and
 white number; empty workspaces stay dim. The renderer redraws only when the
 occupied-workspace mask changes, and no shell command is launched for polling.
+
+Workspace zones also accept a horizontal drag. A tap opens that workspace;
+dragging a number onto a different number moves every non-pinned window from
+the source workspace into the destination, then opens the destination. The
+merge runs only after release over another numbered zone, so buttons outside
+the workspace strip are never drag targets.
+
+The pink microphone on the home row and `VOICE` in the GPT row directly toggle
+Omarchy's Voxtype recorder. Tap once to start, dictate, and tap again to stop,
+transcribe, and type into the focused field. This avoids synthetic F9 timing;
+the Fn row still exposes an ordinary F9 key for applications that need it.
 
 The patch also filters the T1 keyboard's false Fn up/down pulses. Tap Fn once
 to show F1-F12 and tap it again to return home. Legitimate taps can be only

@@ -23,9 +23,10 @@ This repository now includes a compiled and offline-render-tested layout
 overlay under [`custom-bar/`](../custom-bar/README.md). It pins the public
 display stack at commit `982d97a61a0c834d03e7cf7af5203b11ad7bae44` and adds:
 
-- a default Esc + workspaces 1-10 + GPT + media + Omarchy row;
+- a default Esc + workspaces 1-10 + GPT + media + Omarchy + dictation row;
 - live filled highlights for workspaces that contain app windows;
-- an Fn row containing Esc and F1-F12, including F9 push-to-talk;
+- drag-to-merge for moving all windows between numbered workspaces;
+- an Fn row containing Esc and F1-F12;
 - a MEDIA submenu with Back, brightness, playback and volume;
 - a GPT submenu with Back, ChatGPT/voice/clipboard/capture/copy/paste tools;
 - a Control+Fn live status and system row.
@@ -36,6 +37,18 @@ internal bar menus. The renderer reads Hyprland's local command socket every
 400 ms and fills occupied workspace buttons cyan while leaving empty ones dim.
 Only a changed occupancy mask triggers a frame, so the indicator stays current
 without shell polling or unnecessary T1 traffic.
+
+The digitizer reports continuous horizontal position, not just taps. Press a
+number and slide onto another numbered button before lifting to merge every
+non-pinned window from the first workspace into the second, then focus the
+destination. Lifting on the original number is an ordinary workspace tap;
+lifting outside the numbered strip falls back to that same tap.
+
+The pink microphone button is a direct `voxtype record toggle`: tap once to
+start Omarchy dictation and tap again to stop, transcribe, and type into the
+currently focused field. The GPT menu's `VOICE` button does the same. Calling
+Voxtype directly avoids the repeated sub-second recordings that synthetic F9
+press/release events could create on this digitizer.
 
 The userspace patch also coalesces noisy Fn up/down events:
 tap Fn once for the function row and again for home. A 90 ms edge filter keeps

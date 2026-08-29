@@ -51,6 +51,13 @@ int main(void)
 		}
 	}
 
+	if (strcmp(dfr_keys_media[14].cmd,
+		   "/run/t1-custom-bar/touchbar-action dictation-toggle") != 0)
+		return fail("media", 14, "home microphone action is missing");
+	if (strcmp(dfr_keys_meta[2].label, "VOICE") != 0 ||
+	    dfr_keys_meta[2].action != DFR_ACT_CMD)
+		return fail("meta", 2, "voice toggle is not a command action");
+
 	puts("custom layout geometry/actions: PASS");
 	return 0;
 }

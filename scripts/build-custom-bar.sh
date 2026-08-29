@@ -26,17 +26,26 @@ actual_origin=$(git -C "$source_root" remote get-url origin)
 git -C "$source_root" fetch --quiet origin "$pin"
 git -C "$source_root" checkout --quiet --detach "$pin"
 
+# This checkout is an ignored, disposable build cache. Restore only the files
+# owned by our patch stack so repeated builds always begin from the pinned
+# source and incremental patches do not confuse reverse-apply detection.
+git -C "$source_root" restore --source "$pin" --staged --worktree -- \
+  touch-bar/dfrd/dfr-fnd.c \
+  touch-bar/dfrd/dfr-layout.h \
+  touch-bar/dfrd/dfr-render.c \
+  touch-bar/dfrd/dfr-touchd.c \
+  touch-bar/dfrd/dfrd-run.sh \
+  touch-bar/kernel/t1-touchbar-display/appletbdrm.c
+
 for patch_file in \
   "$repo_root/custom-bar/patches/dfr-layer-actions.patch" \
-  "$repo_root/custom-bar/patches/dfr-workspace-occupancy.patch"; do
-  if git -C "$source_root" apply --reverse --check "$patch_file" 2>/dev/null; then
-    : # already applied in this disposable build tree
-  elif git -C "$source_root" apply --check "$patch_file"; then
-    git -C "$source_root" apply "$patch_file"
-  else
+  "$repo_root/custom-bar/patches/dfr-workspace-occupancy.patch" \
+  "$repo_root/custom-bar/patches/dfr-workspace-drag.patch"; do
+  if ! git -C "$source_root" apply --check "$patch_file"; then
     printf 'ERROR: custom patch no longer applies cleanly: %s\n' "$patch_file" >&2
     exit 1
   fi
+  git -C "$source_root" apply "$patch_file"
 done
 
 # Install the Omarchy layout after applying the userspace behavior patch.

@@ -1,0 +1,176 @@
+diff --git i/touch-bar/dfrd/dfr-touchd.c w/touch-bar/dfrd/dfr-touchd.c
+index 9fdfba3..6747844 100644
+--- i/touch-bar/dfrd/dfr-touchd.c
++++ w/touch-bar/dfrd/dfr-touchd.c
+@@ -29,7 +29,8 @@
+  * (env DFR_USER / DFR_UID override; else owner of /run/user/<uid>; else
+  * uid 1000), set HOME / XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS /
+  * WAYLAND_DISPLAY / DISPLAY, then `/bin/sh -c "<cmd>"`. One launch per
+- * tap (fires on the down edge only, plus a 300 ms global debounce).
++ * tap with a 300 ms debounce. Workspace commands wait for finger-up so a
++ * numbered button can distinguish an ordinary tap from a horizontal drag.
+  */
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -335,6 +335,64 @@ static void emit(int type, int code, int value)
+ static void key_down(int k) { emit(EV_KEY, k, 1); emit(EV_SYN, SYN_REPORT, 0); }
+ static void key_up(int k)   { emit(EV_KEY, k, 0); emit(EV_SYN, SYN_REPORT, 0); }
+ 
++static int workspace_number(const struct dfr_key *k)
++{
++	if (k->indicator < DFR_IND_WORKSPACE_1 ||
++	    k->indicator > DFR_IND_WORKSPACE_10)
++		return 0;
++	return k->indicator - DFR_IND_WORKSPACE_1 + 1;
++}
++
++/* Workspace actions wait for finger-up so a tap and a horizontal drag can
++ * share the same zones. A drag from one numbered zone to another merges all
++ * source-workspace windows into the target; releasing anywhere else is the
++ * ordinary source-workspace tap. */
++static void end_contact(int *down, int *down_key, int *drag_source,
++			int *drag_target, const char **down_cmd, int dry_run,
++			int verbose, int64_t *last_launch)
++{
++	if (!*down)
++		return;
++
++	if (*drag_source) {
++		char merge_cmd[128];
++		const char *cmd = *down_cmd;
++		int target = *drag_target;
++		if (target && target != *drag_source) {
++			snprintf(merge_cmd, sizeof merge_cmd,
++				 "/run/t1-custom-bar/touchbar-action workspace-merge %d %d",
++				 *drag_source, target);
++			cmd = merge_cmd;
++			printf("UP workspace drag %d -> %d: %s%s\n",
++			       *drag_source, target, cmd, dry_run ? " (dry)" : "");
++		} else {
++			printf("UP workspace tap %d: %s%s\n", *drag_source, cmd,
++			       dry_run ? " (dry)" : "");
++		}
++
++		int64_t t = now_ms();
++		if (cmd && t - *last_launch >= LAUNCH_DEBOUNCE_MS) {
++			*last_launch = t;
++			if (!dry_run)
++				launch_cmd(cmd);
++		} else if (cmd) {
++			printf("UP workspace action debounced\n");
++		}
++	} else if (!dry_run && *down_key) {
++		key_up(*down_key);
++	}
++
++	if (verbose && !*drag_source) {
++		printf("UP\n");
++		fflush(stdout);
++	}
++	*down = 0;
++	*down_key = 0;
++	*drag_source = 0;
++	*drag_target = 0;
++	*down_cmd = NULL;
++}
++
+ /* ------------------------------------------------------------------ */
+ 
+ int main(int argc, char **argv)
+@@ -406,6 +464,8 @@ int main(int argc, char **argv)
+ 	fflush(stdout);
+ 
+ 	int down = 0, down_key = 0;     /* down_key == 0: contact w/o key (cmd button) */
++	int drag_source = 0, drag_target = 0;
++	const char *down_cmd = NULL;
+ 	int float_off = -1;        /* auto-detected: 0, or 1 if reports are ID-prefixed */
+ 	int logged_size = 0;
+ 	int64_t last_launch = 0;
+@@ -423,6 +483,8 @@ int main(int argc, char **argv)
+ 				if (down) {           /* don't leave a key stuck across swap */
+ 					if (!dry_run && down_key) key_up(down_key);
+ 					down = 0;
++					down_key = drag_source = drag_target = 0;
++					down_cmd = NULL;
+ 				}
+ 				layout_idx = idx;
+ 				layout = &dfr_layouts[layout_idx];
+@@ -440,11 +502,8 @@ int main(int argc, char **argv)
+ 			break;
+ 		}
+ 		if (pr == 0) {                       /* silence => finger lifted */
+-			if (down) {
+-				if (!dry_run && down_key) key_up(down_key);
+-				if (verbose) { printf("UP\n"); fflush(stdout); }
+-				down = 0;
+-			}
++			end_contact(&down, &down_key, &drag_source, &drag_target,
++				    &down_cmd, dry_run, verbose, &last_launch);
+ 			continue;
+ 		}
+ 
+@@ -487,10 +546,8 @@ int main(int argc, char **argv)
+ 					printf("  (no plausible X at offset 0/1 — "
+ 					       "release frame or wrong node?)\n");
+ 				/* treat as release */
+-				if (down) {
+-					if (!dry_run && down_key) key_up(down_key);
+-					down = 0;
+-				}
++				end_contact(&down, &down_key, &drag_source, &drag_target,
++					    &down_cmd, dry_run, verbose, &last_launch);
+ 				continue;
+ 			}
+ 			printf("float X found at report offset %d\n", float_off);
+@@ -501,10 +558,8 @@ int main(int argc, char **argv)
+ 		memcpy(&x, buf + float_off, 4);
+ 
+ 		if (x < 0.45f || x > 1.05f) {        /* explicit release / junk */
+-			if (down) {
+-				if (!dry_run && down_key) key_up(down_key);
+-				down = 0;
+-			}
++			end_contact(&down, &down_key, &drag_source, &drag_target,
++				    &down_cmd, dry_run, verbose, &last_launch);
+ 			continue;
+ 		}
+ 
+@@ -517,6 +572,9 @@ int main(int argc, char **argv)
+ 			const struct dfr_key *k = &layout->keys[z];
+ 			down = 1;
+ 			down_key = 0;
++			drag_source = workspace_number(k);
++			drag_target = drag_source;
++			down_cmd = NULL;
+ 			if (k->action == DFR_ACT_LAYER && k->cmd) {
+ 				int idx = dfr_layout_index(k->cmd);
+ 				if (idx >= 0 && idx != layout_idx) {
+@@ -527,6 +585,11 @@ int main(int argc, char **argv)
+ 				printf("DOWN x=%.3f nx=%.3f -> zone %d [%s] LAYER: %s%s\n",
+ 				       (double)x, (double)nx, z, k->label, k->cmd,
+ 				       dry_run ? " (dry)" : "");
++			} else if (k->action == DFR_ACT_CMD && k->cmd && drag_source) {
++				down_cmd = k->cmd;
++				printf("DOWN x=%.3f nx=%.3f -> zone %d [%s] WORKSPACE %d"
++				       " (tap or drag)%s\n", (double)x, (double)nx, z,
++				       k->label, drag_source, dry_run ? " (dry)" : "");
+ 			} else if (k->action == DFR_ACT_CMD && k->cmd) {
+ 				/* fire on the down edge; the `down` latch gives
+ 				 * one launch per contact, the time check guards
+@@ -551,10 +614,15 @@ int main(int argc, char **argv)
+ 				       dry_run ? " (dry)" : "");
+ 			}
+ 			fflush(stdout);
++		} else if (drag_source) {
++			/* The digitizer continuously reports X while held, so remember
++			 * the most recent numbered zone as the drop destination. */
++			drag_target = workspace_number(&layout->keys[z]);
+ 		}
+-		/* while held we keep the original key even if the finger slides */
++		/* Non-workspace keys keep the original key while the finger slides. */
+ 	}
+ 
++	/* Shutdown cancels a pending workspace drag rather than moving windows. */
+ 	if (down && !dry_run && down_key)
+ 		key_up(down_key);
+ 	if (g_ui >= 0) {
