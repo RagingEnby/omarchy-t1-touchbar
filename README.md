@@ -141,7 +141,8 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
 - **Custom graphics and touch:** feasible today through T1 USB configuration 2,
   `appletbdrm`, a config-selection driver, and a userspace renderer/touch
   daemon. A compiled and live-tested Omarchy overlay now provides direct
-  workspace actions plus dedicated ChatGPT, media, dictation and system layers.
+  workspace actions, live occupied-workspace highlights, and dedicated ChatGPT,
+  media, dictation and system layers.
   Its tap-to-toggle Fn watcher filters false up/down pulses that previously
   flooded the DRM driver, and its T1 completion-queue drain prevents repeated
   frames from wedging the bulk endpoint. The session-only start/rollback path has been validated on the

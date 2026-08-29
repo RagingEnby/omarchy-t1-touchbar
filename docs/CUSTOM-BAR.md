@@ -24,6 +24,7 @@ overlay under [`custom-bar/`](../custom-bar/README.md). It pins the public
 display stack at commit `982d97a61a0c834d03e7cf7af5203b11ad7bae44` and adds:
 
 - a default Esc + workspaces 1-10 + GPT + media + Omarchy row;
+- live filled highlights for workspaces that contain app windows;
 - an Fn row containing Esc and F1-F12, including F9 push-to-talk;
 - a MEDIA submenu with Back, brightness, playback and volume;
 - a GPT submenu with Back, ChatGPT/voice/clipboard/capture/copy/paste tools;
@@ -31,7 +32,12 @@ display stack at commit `982d97a61a0c834d03e7cf7af5203b11ad7bae44` and adds:
 
 The home-row workspace actions dispatch directly to current Omarchy Hyprland,
 so they do not depend on synthetic F13-F22 bindings. GPT and MEDIA are true
-internal bar menus. The userspace patch also coalesces noisy Fn up/down events:
+internal bar menus. The renderer reads Hyprland's local command socket every
+400 ms and fills occupied workspace buttons cyan while leaving empty ones dim.
+Only a changed occupancy mask triggers a frame, so the indicator stays current
+without shell polling or unnecessary T1 traffic.
+
+The userspace patch also coalesces noisy Fn up/down events:
 tap Fn once for the function row and again for home. A 90 ms edge filter keeps
 fast taps, while a latest-state-wins renderer schedules at most one full-frame
 USB push every 120 ms. Fn releases never redraw the bar.
@@ -102,14 +108,17 @@ The current layout uses the unprivileged helper
 [`touchbar-action.sh`](../custom-bar/touchbar-action.sh). The root touch daemon
 drops to the logged-in user before calling it. Workspace buttons use current
 Omarchy's native Hyprland Lua dispatcher; ChatGPT buttons focus the native app
-before sending its standard shortcuts. No file below `/usr/share/omarchy` is
+before sending its standard shortcuts. The helper supplies `OMARCHY_PATH` to
+the touch daemon's intentionally minimal environment so Omarchy menu actions
+remain callable. No file below `/usr/share/omarchy` is
 edited, and the older F13-F24 examples remain available only as legacy design
 references.
 
-## Full visual workspace layer
+## Live visual workspace layer
 
-A future enhancement can tint the active workspace by feeding Hyprland state
-back to the renderer. The current action path is:
+The renderer now discovers the newest logged-in Hyprland command socket under
+`/run/user`, requests workspace JSON directly, and maps window-bearing IDs
+1-10 onto the corresponding buttons. The action path remains:
 
 ```text
 T1 touch ----> root mapper ---- drops privileges ----> touchbar-action
@@ -130,11 +139,12 @@ input cannot supply shell text, and desktop commands refuse to run as root.
 5. Port and review persistence for the tested `apple-ib-drv/0.1` source layout.
 6. Switch to configuration 2 for one live test with a config-1 rollback ready.
 7. Validate display, touch, Esc, Fn layer, webcam, suspend/resume, and shutdown.
-8. Add active-workspace IPC tinting after the static workspace row is proven.
+8. Add occupied-workspace IPC tinting after the static workspace row is proven.
 9. Only then enable the custom daemon at boot.
 
-Phases 1-6 are complete as a non-persistent live test on the originating
-Omarchy machine. Phase 7 still needs person-at-keyboard testing, and persistent
+Phases 1-6 and the phase-8 occupancy indicator are complete as a non-persistent
+live test on the originating Omarchy machine. Phase 7 still needs broader
+person-at-keyboard testing, and persistent
 installation remains gated: the upstream installer assumes a different DKMS
 source version and must not be run unchanged.
 

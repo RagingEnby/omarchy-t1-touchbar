@@ -39,6 +39,11 @@ int main(void)
 			if (key->action == DFR_ACT_LAYER &&
 			    (!key->cmd || dfr_layout_index(key->cmd) < 0))
 				return fail(layout->name, k, "layer action has an invalid target");
+			if (key->indicator < DFR_IND_NONE || key->indicator >= DFR_IND_COUNT)
+				return fail(layout->name, k, "indicator is out of range");
+			if (l == 1 && k >= 1 && k <= 10 &&
+			    key->indicator != DFR_IND_WORKSPACE_1 + k - 1)
+				return fail(layout->name, k, "workspace indicator does not match button");
 			if (x0 < 0 || x1 > 2170 || x0 >= x1)
 				return fail(layout->name, k, "invalid pixel extent");
 			if (dfr_zone_from_nx(layout, midpoint) != k)

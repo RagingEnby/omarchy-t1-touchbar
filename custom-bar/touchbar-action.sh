@@ -2,6 +2,10 @@
 # Small desktop-session actions used by the Omarchy Touch Bar layout.
 set -euo pipefail
 
+# dfr-touchd deliberately launches desktop actions with a minimal environment.
+# Omarchy's CLI requires its packaged root even though it is already on PATH.
+export OMARCHY_PATH=${OMARCHY_PATH:-/usr/share/omarchy}
+
 load_hyprland_session() {
   local instances
   instances=$(hyprctl instances -j)

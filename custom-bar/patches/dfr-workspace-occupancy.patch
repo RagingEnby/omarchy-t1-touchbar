@@ -1,0 +1,267 @@
+diff --git i/touch-bar/dfrd/dfr-render.c w/touch-bar/dfrd/dfr-render.c
+index 32fc4e1..caa433d 100644
+--- i/touch-bar/dfrd/dfr-render.c
++++ w/touch-bar/dfrd/dfr-render.c
+@@ -45,7 +45,13 @@
+ #include <errno.h>
+ #include <signal.h>
+ #include <time.h>
++#include <dirent.h>
++#include <limits.h>
+ #include <sys/mman.h>
++#include <sys/socket.h>
++#include <sys/stat.h>
++#include <sys/time.h>
++#include <sys/un.h>
+ 
+ #include <xf86drm.h>
+ #include <xf86drmMode.h>
+@@ -67,18 +73,24 @@
+ #define COL_TXT 0xFFE8E8E8u
+ #define COL_ESC 0xFF3A2E2Eu   /* slightly warm tint so ESC is findable by feel */
+ #define COL_BORDER 0xFF606060u /* grey outline so buttons stand out on the dark bar */
++#define COL_WS_EMPTY 0xFF64748Bu
++#define COL_WS_OCC_BG 0xFF075985u
++#define COL_WS_OCC_BORDER 0xFF7DD3FCu
++#define COL_WS_OCC_TEXT 0xFFF8FAFCu
+ #define BORDER_PX 2            /* outline thickness (px) */
+ 
+ /* type sizes for the 60px bar (buttons are bar-12 = 48px tall) */
+ #define FONT_PX_MAX 30
+ #define FONT_PX_MIN 10
+ 
+-#define IND_REFRESH_MS 2500   /* live-indicator poll interval */
++#define IND_REFRESH_MS 400       /* occupied-workspace refresh interval */
++#define STATUS_REFRESH_MS 2500   /* battery/network/hardware interval */
+ 
+ static volatile sig_atomic_t g_stop, g_cycle, g_setlayout = -1;
+ static void on_stop(int s)  { (void)s; g_stop = 1; }
+ static void on_usr1(int s)  { (void)s; g_cycle = 1; }
+ static void on_rt(int s)    { g_setlayout = s - SIGRTMIN; }  /* SIGRTMIN+i -> set layout i */
++static int64_t now_ms(void);
+ 
+ /* ------------------------------------------------------------------ */
+ /* Framebuffer + physical-coordinate drawing                            */
+@@ -358,8 +370,150 @@ static int utf8_enc(uint32_t cp, char *buf)
+ }
+ 
+ /* one cached label per indicator type; empty string = use static fallback */
+-static char g_ind_label[5][64];
+-static uint32_t g_ind_color[5];   /* dynamic tint per indicator (0 = default) */
++static char g_ind_label[DFR_IND_COUNT][64];
++static uint32_t g_ind_color[DFR_IND_COUNT]; /* dynamic tint per indicator */
++static unsigned g_workspace_mask;
++static int64_t g_next_status_refresh;
++
++static int is_number(const char *s)
++{
++	if (!s || !*s)
++		return 0;
++	for (; *s; s++)
++		if (*s < '0' || *s > '9')
++			return 0;
++	return 1;
++}
++
++/* Find the newest Hyprland command socket across logged-in desktop users. */
++static int find_hypr_socket(char *out, size_t n)
++{
++	DIR *users = opendir("/run/user");
++	if (!users)
++		return -1;
++	struct timespec newest = { 0, 0 };
++	struct dirent *user;
++	out[0] = 0;
++	while ((user = readdir(users))) {
++		if (!is_number(user->d_name) || strtol(user->d_name, NULL, 10) < 1000)
++			continue;
++		char hypr[PATH_MAX];
++		if (snprintf(hypr, sizeof hypr, "/run/user/%s/hypr", user->d_name) >=
++		    (int)sizeof hypr)
++			continue;
++		DIR *instances = opendir(hypr);
++		if (!instances)
++			continue;
++		struct dirent *instance;
++		while ((instance = readdir(instances))) {
++			if (instance->d_name[0] == '.')
++				continue;
++			char path[PATH_MAX];
++			if (snprintf(path, sizeof path, "%s/%s/.socket.sock",
++				     hypr, instance->d_name) >= (int)sizeof path)
++				continue;
++			struct stat st;
++			if (stat(path, &st) < 0 || !S_ISSOCK(st.st_mode))
++				continue;
++			if (!out[0] || st.st_mtim.tv_sec > newest.tv_sec ||
++			    (st.st_mtim.tv_sec == newest.tv_sec &&
++			     st.st_mtim.tv_nsec > newest.tv_nsec)) {
++				if (strlen(path) >= n)
++					continue;
++				snprintf(out, n, "%s", path);
++				newest = st.st_mtim;
++			}
++		}
++		closedir(instances);
++	}
++	closedir(users);
++	return out[0] ? 0 : -1;
++}
++
++static int hypr_request(const char *request, char *response, size_t n)
++{
++	char path[PATH_MAX];
++	if (find_hypr_socket(path, sizeof path) < 0)
++		return -1;
++	if (strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path))
++		return -1;
++
++	int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
++	if (fd < 0)
++		return -1;
++	struct timeval timeout = { .tv_sec = 0, .tv_usec = 150000 };
++	setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
++	setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
++	struct sockaddr_un addr;
++	memset(&addr, 0, sizeof addr);
++	addr.sun_family = AF_UNIX;
++	snprintf(addr.sun_path, sizeof addr.sun_path, "%s", path);
++	if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
++		close(fd);
++		return -1;
++	}
++
++	size_t left = strlen(request);
++	const char *p = request;
++	while (left) {
++		ssize_t wrote = write(fd, p, left);
++		if (wrote <= 0) {
++			close(fd);
++			return -1;
++		}
++		p += wrote;
++		left -= (size_t)wrote;
++	}
++	shutdown(fd, SHUT_WR);
++
++	size_t used = 0;
++	while (used + 1 < n) {
++		ssize_t got = read(fd, response + used, n - used - 1);
++		if (got == 0)
++			break;
++		if (got < 0) {
++			if (errno == EINTR)
++				continue;
++			close(fd);
++			return -1;
++		}
++		used += (size_t)got;
++	}
++	close(fd);
++	response[used] = 0;
++	return used ? 0 : -1;
++}
++
++static int workspace_refresh(void)
++{
++	char response[65536];
++	if (hypr_request("j/workspaces", response, sizeof response) < 0)
++		return 0;
++
++	unsigned next = 0;
++	const char *p = response;
++	while ((p = strstr(p, "\"id\""))) {
++		const char *id_colon = strchr(p, ':');
++		if (!id_colon)
++			break;
++		char *id_end;
++		long id = strtol(id_colon + 1, &id_end, 10);
++		const char *next_id = strstr(id_end, "\"id\"");
++		const char *windows = strstr(id_end, "\"windows\"");
++		if (windows && (!next_id || windows < next_id)) {
++			const char *win_colon = strchr(windows, ':');
++			long count = win_colon ? strtol(win_colon + 1, NULL, 10) : 0;
++			if (id >= 1 && id <= 10 && count > 0)
++				next |= 1u << (id - 1);
++		}
++		p = next_id ? next_id : id_end;
++		if (!next_id)
++			break;
++	}
++	int changed = next != g_workspace_mask;
++	g_workspace_mask = next;
++	return changed;
++}
+ 
+ static void ind_compose_battery(char *out, size_t n)
+ {
+@@ -468,21 +622,28 @@ static void ind_compose_bt(char *out, size_t n)
+ /* refresh all indicator labels; returns 1 if any changed */
+ static int ind_refresh(void)
+ {
+-	char next[5][64];
+-	memset(next, 0, sizeof next);
+-	ind_compose_battery (next[DFR_IND_BATTERY],  sizeof next[0]);
+-	ind_compose_wifi    (next[DFR_IND_WIFI],     sizeof next[0]);
+-	ind_compose_bt      (next[DFR_IND_BT],       sizeof next[0]);
+-	ind_compose_kbdlight(next[DFR_IND_KBDLIGHT], sizeof next[0]);
+-	int changed = memcmp(next, g_ind_label, sizeof next) != 0;
+-	memcpy(g_ind_label, next, sizeof next);
++	int changed = workspace_refresh();
++	int64_t now = now_ms();
++	if (now >= g_next_status_refresh) {
++		char next[5][64];
++		memset(next, 0, sizeof next);
++		ind_compose_battery (next[DFR_IND_BATTERY],  sizeof next[0]);
++		ind_compose_wifi    (next[DFR_IND_WIFI],     sizeof next[0]);
++		ind_compose_bt      (next[DFR_IND_BT],       sizeof next[0]);
++		ind_compose_kbdlight(next[DFR_IND_KBDLIGHT], sizeof next[0]);
++		if (memcmp(next, g_ind_label, sizeof next) != 0) {
++			memcpy(g_ind_label, next, sizeof next);
++			changed = 1;
++		}
++		g_next_status_refresh = now + STATUS_REFRESH_MS;
++	}
+ 	return changed;
+ }
+ 
+ /* live label for a key (static label if no indicator / no live value) */
+ static const char *key_label(const struct dfr_key *k)
+ {
+-	if (k->indicator > DFR_IND_NONE && k->indicator < 5 &&
++	if (k->indicator > DFR_IND_NONE && k->indicator <= DFR_IND_KBDLIGHT &&
+ 	    g_ind_label[k->indicator][0])
+ 		return g_ind_label[k->indicator];
+ 	return k->label;
+@@ -498,15 +659,25 @@ static void draw_layout(const struct dfr_layout *l)
+ 		int x0, x1;
+ 		dfr_key_extent(l, i, g_long, &x0, &x1);
+ 		int bw = (x1 - x0) - 6;                  /* 3px gap each side */
+-		uint32_t bc = (l->keys[i].action == DFR_ACT_KEY &&
+-			       l->keys[i].keycode == KEY_ESC) ? COL_ESC : COL_BTN;
+-		fill_phys(x0 + 3, 6, bw, g_short - 12, bc);
+-		stroke_phys(x0 + 3, 6, bw, g_short - 12, BORDER_PX, COL_BORDER);
+-
+ 		const struct dfr_key *k = &l->keys[i];
++		int workspace = k->indicator >= DFR_IND_WORKSPACE_1 &&
++			k->indicator <= DFR_IND_WORKSPACE_10 ?
++			k->indicator - DFR_IND_WORKSPACE_1 + 1 : 0;
++		int occupied = workspace &&
++			(g_workspace_mask & (1u << (workspace - 1)));
++		uint32_t bc = (k->action == DFR_ACT_KEY && k->keycode == KEY_ESC) ?
++			COL_ESC : occupied ? COL_WS_OCC_BG : COL_BTN;
++		uint32_t border = occupied ? COL_WS_OCC_BORDER : COL_BORDER;
++		fill_phys(x0 + 3, 6, bw, g_short - 12, bc);
++		stroke_phys(x0 + 3, 6, bw, g_short - 12,
++			    occupied ? BORDER_PX + 1 : BORDER_PX, border);
++
+ 		const char *label = key_label(k);
+ 		uint32_t tcol = COL_TXT;
+-		if (k->indicator > DFR_IND_NONE && k->indicator < 5 && g_ind_color[k->indicator])
++		if (workspace)
++			tcol = occupied ? COL_WS_OCC_TEXT : COL_WS_EMPTY;
++		else if (k->indicator > DFR_IND_NONE &&
++		    k->indicator <= DFR_IND_KBDLIGHT && g_ind_color[k->indicator])
+ 			tcol = g_ind_color[k->indicator];
+ 		else if (k->color)
+ 			tcol = k->color;

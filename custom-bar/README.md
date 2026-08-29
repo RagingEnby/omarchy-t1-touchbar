@@ -23,6 +23,13 @@ Internal layout names are retained for compatibility with upstream `dfr-fnd`:
 Workspace and Omarchy buttons launch scoped commands as the logged-in desktop
 user. GPT and MEDIA are internal layer actions: they repaint the bar without
 launching anything until a button inside the selected menu is tapped.
+The action helper supplies Omarchy's packaged root explicitly because the root
+touch daemon drops privileges into a deliberately minimal desktop environment.
+
+The home row reads Hyprland's local IPC state every 400 ms. Workspace buttons
+with one or more app windows get a filled cyan background, bright outline and
+white number; empty workspaces stay dim. The renderer redraws only when the
+occupied-workspace mask changes, and no shell command is launched for polling.
 
 The patch also filters the T1 keyboard's false Fn up/down pulses. Tap Fn once
 to show F1-F12 and tap it again to return home. Legitimate taps can be only
