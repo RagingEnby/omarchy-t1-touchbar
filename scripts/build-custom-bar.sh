@@ -25,7 +25,17 @@ actual_origin=$(git -C "$source_root" remote get-url origin)
 git -C "$source_root" fetch --quiet origin "$pin"
 git -C "$source_root" checkout --quiet --detach "$pin"
 
-# The overlay is the only expected source change in this disposable build tree.
+patch_file="$repo_root/custom-bar/patches/dfr-layer-actions.patch"
+if git -C "$source_root" apply --reverse --check "$patch_file" 2>/dev/null; then
+  : # already applied in this disposable build tree
+elif git -C "$source_root" apply --check "$patch_file"; then
+  git -C "$source_root" apply "$patch_file"
+else
+  printf 'ERROR: custom dfrd patch no longer applies cleanly\n' >&2
+  exit 1
+fi
+
+# Install the Omarchy layout after applying the userspace behavior patch.
 install -m0644 "$repo_root/custom-bar/dfr-layout.h" "$dfrd_root/dfr-layout.h"
 
 make -C "$dfrd_root" clean

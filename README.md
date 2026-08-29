@@ -140,13 +140,14 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
   project, not a PAM shortcut. See [docs/TOUCH-ID.md](docs/TOUCH-ID.md).
 - **Custom graphics and touch:** feasible today through T1 USB configuration 2,
   `appletbdrm`, a config-selection driver, and a userspace renderer/touch
-  daemon. A compiled and offline-tested Omarchy overlay now provides workspace,
-  ChatGPT, dictation, media and system layers. Its session-only start/rollback
-  path has also been live-validated on the originating MacBookPro13,2 without a
-  reboot. It replaces the firmware strip, so boot persistence remains an
-  optional second phase after person-at-keyboard testing. See
+  daemon. A compiled and live-tested Omarchy overlay now provides direct
+  workspace actions plus dedicated ChatGPT, media, dictation and system layers.
+  Its Fn watcher filters false release pulses that previously flooded the DRM
+  driver. The session-only start/rollback path has been validated on the
+  originating MacBookPro13,2 without a reboot. It replaces the firmware strip,
+  so boot persistence remains an optional second phase after longer testing. See
   [docs/CUSTOM-BAR.md](docs/CUSTOM-BAR.md), [the layout and previews](custom-bar/README.md),
-  and the [custom Omarchy bindings](examples/hypr/touchbar-custom.lua).
+  and the [custom action helper](custom-bar/touchbar-action.sh).
 
 ## Privacy and safety
 

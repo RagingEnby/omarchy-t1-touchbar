@@ -36,6 +36,9 @@ int main(void)
 				return fail(layout->name, k, "key action has no keycode");
 			if (key->action == DFR_ACT_CMD && (!key->cmd || !*key->cmd))
 				return fail(layout->name, k, "command action has no command");
+			if (key->action == DFR_ACT_LAYER &&
+			    (!key->cmd || dfr_layout_index(key->cmd) < 0))
+				return fail(layout->name, k, "layer action has an invalid target");
 			if (x0 < 0 || x1 > 2170 || x0 >= x1)
 				return fail(layout->name, k, "invalid pixel extent");
 			if (dfr_zone_from_nx(layout, midpoint) != k)

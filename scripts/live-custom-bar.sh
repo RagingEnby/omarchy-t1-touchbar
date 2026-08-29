@@ -119,6 +119,7 @@ start_live() {
   install -m0755 "$dfrd_root/dfr-touchd" "$state_root/dfr-touchd"
   install -m0755 "$dfrd_root/dfr-fnd" "$state_root/dfr-fnd"
   install -m0755 "$dfrd_root/dfrd-run.sh" "$state_root/dfrd-run.sh"
+  install -m0755 "$repo_root/custom-bar/touchbar-action.sh" "$state_root/touchbar-action"
   install -m0644 "$dfrd_root/99-touchbar-dfr.rules" "$runtime_rule"
   udevadm control --reload
 

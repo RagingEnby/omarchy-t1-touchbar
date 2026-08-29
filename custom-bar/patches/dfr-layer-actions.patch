@@ -1,0 +1,172 @@
+diff --git a/touch-bar/dfrd/dfr-fnd.c b/touch-bar/dfrd/dfr-fnd.c
+index 9e514c5..fd4e60c 100644
+--- a/touch-bar/dfrd/dfr-fnd.c
++++ b/touch-bar/dfrd/dfr-fnd.c
+@@ -24,14 +24,29 @@
+ #include <stdio.h>
+ #include <stdlib.h>
+ #include <string.h>
++#include <stdint.h>
++#include <errno.h>
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <dirent.h>
+ #include <signal.h>
++#include <poll.h>
++#include <time.h>
+ #include <linux/input.h>
+ #include <sys/ioctl.h>
+ #include "dfr-layout.h"
+ 
++/* The T1 keyboard can emit short false Fn-up pulses while Fn is held. Keep
++ * the Fn layer immediate, but require a quiet release before redrawing home. */
++#define FN_RELEASE_GRACE_MS 600
++
++static int64_t now_ms(void)
++{
++	struct timespec ts;
++	clock_gettime(CLOCK_MONOTONIC, &ts);
++	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
++}
++
+ static int find_keyboard(char *out, size_t outsz)
+ {
+ 	DIR *d = opendir("/dev/input");
+@@ -65,6 +80,14 @@ static int layer_idx(const char *name)
+ 	return i < 0 ? 0 : i;
+ }
+ 
++static void signal_layer(pid_t *pids, int npids, int idx, int verbose)
++{
++	for (int i = 0; i < npids; i++)
++		kill(pids[i], SIGRTMIN + idx);
++	if (verbose)
++		printf("    -> layout '%s' (SIGRTMIN+%d)\n", dfr_layouts[idx].name, idx);
++}
++
+ int main(int argc, char **argv)
+ {
+ 	int verbose = 0;
+@@ -95,8 +118,29 @@ int main(int argc, char **argv)
+ 		printf("driving %d pid(s): Fn->fn, Ctrl+Fn->ctrl, Alt+Fn->alt, Cmd+Fn->meta, release->media\n", npids);
+ 
+ 	int ctrl = 0, alt = 0, meta = 0;
++	int fn_active = 0, release_pending = 0;
++	int64_t release_at = 0;
+ 	struct input_event ev;
+-	while (read(fd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
++	for (;;) {
++		int timeout = -1;
++		if (release_pending) {
++			int64_t left = release_at - now_ms();
++			timeout = left > 0 ? (int)left : 0;
++		}
++		struct pollfd pfd = { .fd = fd, .events = POLLIN };
++		int pr = poll(&pfd, 1, timeout);
++		if (pr < 0) {
++			if (errno == EINTR) continue;
++			break;
++		}
++		if (pr == 0) {
++			release_pending = 0;
++			fn_active = 0;
++			signal_layer(pids, npids, idx_media, verbose);
++			continue;
++		}
++		if (read(fd, &ev, sizeof ev) != (ssize_t)sizeof ev)
++			break;
+ 		if (ev.type != EV_KEY || ev.value == 2 /* autorepeat */) continue;
+ 
+ 		/* track modifier state */
+@@ -113,17 +157,21 @@ int main(int argc, char **argv)
+ 			printf("  code=%u value=%d\n", ev.code, ev.value);
+ 
+ 		if (ev.code == KEY_FN) {
+-			int idx;
+-			if (ev.value) {            /* Fn pressed: choose layer by modifier */
++			if (ev.value) {            /* Fn down is immediate */
++				release_pending = 0;  /* cancel a noisy false release */
++				if (fn_active)
++					continue;
+ 				const char *name = ctrl ? "ctrl" : alt ? "alt" : meta ? "meta" : "fn";
+-				idx = layer_idx(name);
+-			} else {                   /* Fn released: back to default */
+-				idx = idx_media;
++				fn_active = 1;
++				signal_layer(pids, npids, layer_idx(name), verbose);
++			} else if (fn_active) {
++				/* Delay only the release. Another down event within the
++				 * grace period proves this was T1 event chatter. */
++				release_pending = 1;
++				release_at = now_ms() + FN_RELEASE_GRACE_MS;
++				if (verbose)
++					printf("    -> release pending (%d ms)\n", FN_RELEASE_GRACE_MS);
+ 			}
+-			for (int i = 0; i < npids; i++)
+-				kill(pids[i], SIGRTMIN + idx);
+-			if (verbose)
+-				printf("    -> layout '%s' (SIGRTMIN+%d)\n", dfr_layouts[idx].name, idx);
+ 		}
+ 	}
+ 	return 0;
+diff --git a/touch-bar/dfrd/dfr-touchd.c b/touch-bar/dfrd/dfr-touchd.c
+index d6ec3b3..9fdfba3 100644
+--- a/touch-bar/dfrd/dfr-touchd.c
++++ b/touch-bar/dfrd/dfr-touchd.c
+@@ -63,6 +63,7 @@
+ #define LAUNCH_DEBOUNCE_MS 300 /* min gap between DFR_ACT_CMD launches */
+ 
+ static volatile sig_atomic_t g_stop, g_cycle, g_setlayout = -1;
++static pid_t g_renderer_pid;
+ static void on_stop(int s) { (void)s; g_stop = 1; }
+ static void on_usr1(int s) { (void)s; g_cycle = 1; }
+ static void on_rt(int s)   { g_setlayout = s - SIGRTMIN; }  /* SIGRTMIN+i -> set layout i */
+@@ -350,13 +351,15 @@ int main(int argc, char **argv)
+ 			}
+ 		} else if (!strcmp(argv[i], "-d") && i + 1 < argc) {
+ 			dev_override = argv[++i];
++		} else if (!strcmp(argv[i], "-p") && i + 1 < argc) {
++			g_renderer_pid = (pid_t)atoi(argv[++i]);
+ 		} else if (!strcmp(argv[i], "-v")) {
+ 			verbose = 1;
+ 		} else if (!strcmp(argv[i], "-n")) {
+ 			dry_run = 1;   /* parse + print, no uinput injection */
+ 		} else {
+ 			fprintf(stderr,
+-				"usage: %s [-l fn|media|ctrl|alt|meta] [-d /dev/hidrawN] [-v] [-n]\n"
++				"usage: %s [-l fn|media|ctrl|alt|meta] [-d /dev/hidrawN] [-p renderer-pid] [-v] [-n]\n"
+ 				"  -v  verbose (dump raw reports + candidates)\n"
+ 				"  -n  dry run: print taps, do not inject keys / launch commands\n"
+ 				"  DFR_USER / DFR_UID : desktop user for command buttons\n"
+@@ -514,7 +517,17 @@ int main(int argc, char **argv)
+ 			const struct dfr_key *k = &layout->keys[z];
+ 			down = 1;
+ 			down_key = 0;
+-			if (k->action == DFR_ACT_CMD && k->cmd) {
++			if (k->action == DFR_ACT_LAYER && k->cmd) {
++				int idx = dfr_layout_index(k->cmd);
++				if (idx >= 0 && idx != layout_idx) {
++					if (!dry_run && g_renderer_pid > 0)
++						kill(g_renderer_pid, SIGRTMIN + idx);
++					g_setlayout = idx;
++				}
++				printf("DOWN x=%.3f nx=%.3f -> zone %d [%s] LAYER: %s%s\n",
++				       (double)x, (double)nx, z, k->label, k->cmd,
++				       dry_run ? " (dry)" : "");
++			} else if (k->action == DFR_ACT_CMD && k->cmd) {
+ 				/* fire on the down edge; the `down` latch gives
+ 				 * one launch per contact, the time check guards
+ 				 * against bounce/double-report */
+diff --git a/touch-bar/dfrd/dfrd-run.sh b/touch-bar/dfrd/dfrd-run.sh
+index 6f702ac..e18a684 100755
+--- a/touch-bar/dfrd/dfrd-run.sh
++++ b/touch-bar/dfrd/dfrd-run.sh
+@@ -99,7 +99,7 @@ if ! kill -0 "$RPID" 2>/dev/null; then
+ fi
+ 
+ echo "dfrd: starting touch daemon (layout '$LAYOUT')..."
+-"$DIR/dfr-touchd" -l "$LAYOUT" &
++"$DIR/dfr-touchd" -l "$LAYOUT" -p "$RPID" &
+ TPID=$!
+ sleep 1
+ if ! kill -0 "$TPID" 2>/dev/null; then

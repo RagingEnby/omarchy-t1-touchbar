@@ -23,11 +23,17 @@ This repository now includes a compiled and offline-render-tested layout
 overlay under [`custom-bar/`](../custom-bar/README.md). It pins the public
 display stack at commit `982d97a61a0c834d03e7cf7af5203b11ad7bae44` and adds:
 
-- a default Esc + workspaces 1-10 + ChatGPT + Omarchy row;
+- a default Esc + workspaces 1-10 + GPT + media + Omarchy row;
 - an Fn row containing Esc and F1-F12, including F9 push-to-talk;
-- an Option+Fn media, brightness and volume row;
-- a Command+Fn ChatGPT/voice/clipboard/capture/terminal/emoji row;
+- a MEDIA submenu with Back, brightness, playback and volume;
+- a GPT submenu with Back, ChatGPT/voice/clipboard/capture/copy/paste tools;
 - a Control+Fn live status and system row.
+
+The home-row workspace actions dispatch directly to current Omarchy Hyprland,
+so they do not depend on synthetic F13-F22 bindings. GPT and MEDIA are true
+internal bar menus. The userspace patch also coalesces noisy Fn release events:
+the function row appears immediately, and the home row returns after a 600 ms
+quiet release instead of flooding the DRM device with redraws.
 
 ![Omarchy home row](../custom-bar/previews/home.png)
 
@@ -61,8 +67,10 @@ On the originating MacBookPro13,2, the live test reached stable configuration
 touch digitizer, created its uinput keyboard, and started the Fn watcher. The
 same script then restored a healthy two-interface firmware configuration-1
 topology and successfully reactivated custom mode, without a host reboot.
-Physical button behavior should still be confirmed by the person at the
-machine before persistence is considered.
+The home/media/GPT layer swaps, direct workspace dispatch and kernel-timeout
+checks have been exercised on the originating machine. Longer suspend, reboot,
+shutdown and person-at-keyboard testing are still required before persistence
+is considered.
 
 ## Stable firmware mode versus custom display mode
 
@@ -81,66 +89,30 @@ Do not install both modes as if they can own the device simultaneously.
 Configuration 2 replaces the stable firmware strip for that boot. Always keep
 an Esc button in every custom layout and document a config-1 rollback.
 
-## Low-risk Omarchy integration: extended keys
+## Omarchy integration
 
-The custom home row emits F13-F24. Mapping those otherwise unused keys in
-personal Omarchy configuration keeps desktop policy in `~/.config/hypr`.
-
-Review the complete custom mapping:
-
-```bash
-sed -n '1,200p' examples/hypr/touchbar-custom.lua
-```
-
-Then paste the reviewed block into `~/.config/hypr/bindings.lua` and verify:
-
-```bash
-hyprctl reload
-hyprctl configerrors
-```
-
-The custom sample maps:
-
-- F13-F22 to workspaces 1-10;
-- F23 to launch or focus the native ChatGPT app;
-- F24 to the Omarchy root menu.
-
-The older previous/next workspace example remains available as
-[`touchbar-workspaces.lua`](../examples/hypr/touchbar-workspaces.lua).
-
-This follows Omarchy's customization boundary: personal bindings stay in
-`~/.config/hypr`; no files below `/usr/share/omarchy` are edited.
+The current layout uses the unprivileged helper
+[`touchbar-action.sh`](../custom-bar/touchbar-action.sh). The root touch daemon
+drops to the logged-in user before calling it. Workspace buttons use current
+Omarchy's native Hyprland Lua dispatcher; ChatGPT buttons focus the native app
+before sending its standard shortcuts. No file below `/usr/share/omarchy` is
+edited, and the older F13-F24 examples remain available only as legacy design
+references.
 
 ## Full visual workspace layer
 
-A dedicated layer can label buttons `1` through `10`, tint the active
-workspace, and emit F13-F22. The clean architecture is:
+A future enhancement can tint the active workspace by feeding Hyprland state
+back to the renderer. The current action path is:
 
 ```text
-Hyprland IPC ---- active workspace/status ----> unprivileged state helper
-                                                    |
-                                                    v
-T1 DRM <---- rendered workspace layer <---- custom userspace renderer
-   |
-   +---- touch zone ----> uinput F13..F22 ----> Omarchy bindings
+T1 touch ----> root mapper ---- drops privileges ----> touchbar-action
+                                                        |
+                                                        v
+                                              Hyprland/Omarchy IPC
 ```
 
-Prefer emitted extended keys over running arbitrary shell commands from a root
-touch daemon. It gives Hyprland/Omarchy the final policy decision and reduces
-the privileged attack surface.
-
-If commands are used directly, a dispatch can target the first running Hyprland
-instance:
-
-```bash
-hyprctl --instance 0 dispatch workspace 3
-```
-
-For current Omarchy Lua, the native dispatcher form is preferable:
-
-```lua
-o.bind("F15", "Touch Bar: workspace 3", hl.dsp.focus({ workspace = "3" }))
-```
+The command allowlist is compiled into the reviewed layout. Arbitrary touch
+input cannot supply shell text, and desktop commands refuse to run as root.
 
 ## Suggested build phases
 

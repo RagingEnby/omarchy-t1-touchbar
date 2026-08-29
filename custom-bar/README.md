@@ -5,22 +5,28 @@ Touch Bar userspace stack in
 [`xeeban/macbook-t1-linux`](https://github.com/xeeban/macbook-t1-linux).
 
 It does not contain Apple firmware or machine-personalized data. The build
-script fetches the pinned public source, overlays `dfr-layout.h`, compiles the
-three daemons, and renders offline previews. Building does not switch the T1
+script fetches the pinned public source, applies the small userspace patch in
+`patches/`, overlays `dfr-layout.h`, compiles the three daemons, and renders
+offline previews. Building does not switch the T1
 to USB configuration 2, unload a driver, install a service, or reboot.
 
 Internal layout names are retained for compatibility with upstream `dfr-fnd`:
 
 | Gesture | Internal name | Visible row |
 |---|---|---|
-| default | `media` | Esc, workspaces 1-10, ChatGPT, Omarchy |
+| default | `media` | Esc, workspaces 1-10, GPT menu, media menu, Omarchy |
 | Fn | `fn` | Esc and F1-F12 |
 | Ctrl+Fn | `ctrl` | status and system actions |
-| Option+Fn | `alt` | media, brightness and volume |
-| Command+Fn | `meta` | ChatGPT and AI/productivity tools |
+| MEDIA button | `alt` | Back, brightness, playback and volume |
+| GPT button | `meta` | Back, ChatGPT, voice and productivity actions |
 
-The home row emits F13-F24. Install the companion personal Hyprland bindings
-from `examples/hypr/touchbar-custom.lua` before activating display mode.
+Workspace and Omarchy buttons launch scoped commands as the logged-in desktop
+user. GPT and MEDIA are internal layer actions: they repaint the bar without
+launching anything until a button inside the selected menu is tapped.
+
+The patch also filters the T1 keyboard's short false Fn-release pulses. Fn
+switches to F1-F12 immediately, while returning home requires a 600 ms quiet
+release. This prevents repeated display redraws and `appletbdrm` timeouts.
 
 ## Build and preview safely
 
@@ -58,6 +64,10 @@ Function row:
 AI/productivity row:
 
 ![AI row](previews/ai.png)
+
+Media row:
+
+![Media row](previews/media.png)
 
 ## Licensing and provenance
 

@@ -22,6 +22,7 @@
 enum dfr_action {
 	DFR_ACT_KEY = 0,
 	DFR_ACT_CMD = 1,
+	DFR_ACT_LAYER = 2,
 };
 
 enum dfr_indicator {
@@ -89,37 +90,38 @@ static const struct dfr_key dfr_keys_fn[] = {
 	{ "F12", KEY_F12, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_TEXT },
 };
 
-/* Default home row. F13-F22 map to workspaces 1-10; F23 and F24 are bound
- * in personal Hyprland config to ChatGPT and the Omarchy root menu. */
+/* Default home row. Commands go straight to Hyprland/Omarchy, avoiding
+ * synthetic F13-F24 bindings. GPT and MEDIA switch the bar itself. */
 static const struct dfr_key dfr_keys_media[] = {
-	{ "ESC", KEY_ESC, 1.45f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_ESC },
-	{ "1", KEY_F13, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "2", KEY_F14, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "3", KEY_F15, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "4", KEY_F16, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "5", KEY_F17, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "6", KEY_F18, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "7", KEY_F19, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "8", KEY_F20, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "9", KEY_F21, 0.85f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "10", KEY_F22, 0.95f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_WORKSPACE },
-	{ "GPT", KEY_F23, 1.5f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_CHATGPT },
-	{ "OM", KEY_F24, 1.25f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_OMARCHY },
+	{ "ESC", KEY_ESC, 1.35f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_ESC },
+	{ "1", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 1", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "2", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 2", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "3", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 3", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "4", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 4", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "5", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 5", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "6", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 6", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "7", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 7", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "8", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 8", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "9", 0, 0.72f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 9", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "10", 0, 0.82f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action workspace 10", DFR_IND_NONE, DFR_COL_WORKSPACE },
+	{ "GPT", 0, 1.25f, DFR_ACT_LAYER, "meta", DFR_IND_NONE, DFR_COL_CHATGPT },
+	{ "MEDIA", 0, 1.45f, DFR_ACT_LAYER, "alt", DFR_IND_NONE, DFR_COL_PLAY },
+	{ "OM", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-root", DFR_IND_NONE, DFR_COL_OMARCHY },
 };
 
 /* Ctrl+Fn: live status plus safe Omarchy system surfaces. */
 static const struct dfr_key dfr_keys_ctrl[] = {
-	{ "KBD", 0, 1.0f, DFR_ACT_CMD, "omarchy menu toggle hardware", DFR_IND_KBDLIGHT, DFR_COL_STATUS },
-	{ "BAT", 0, 1.0f, DFR_ACT_CMD, "omarchy menu toggle system", DFR_IND_BATTERY, DFR_COL_STATUS },
-	{ "WIFI", 0, 1.0f, DFR_ACT_CMD, "omarchy menu toggle hardware", DFR_IND_WIFI, DFR_COL_STATUS },
-	{ "BT", 0, 1.0f, DFR_ACT_CMD, "omarchy menu toggle hardware", DFR_IND_BT, DFR_COL_STATUS },
-	{ "CAPTURE", 0, 1.4f, DFR_ACT_CMD, "omarchy menu toggle capture", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "LOCK", 0, 1.1f, DFR_ACT_CMD, "omarchy system lock", DFR_IND_NONE, DFR_COL_ESC },
+	{ "KBD", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-hardware", DFR_IND_KBDLIGHT, DFR_COL_STATUS },
+	{ "BAT", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-system", DFR_IND_BATTERY, DFR_COL_STATUS },
+	{ "WIFI", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-hardware", DFR_IND_WIFI, DFR_COL_STATUS },
+	{ "BT", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-hardware", DFR_IND_BT, DFR_COL_STATUS },
+	{ "CAPTURE", 0, 1.4f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-capture", DFR_IND_NONE, DFR_COL_ACTION },
+	{ "LOCK", 0, 1.1f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action lock", DFR_IND_NONE, DFR_COL_ESC },
 };
 
 /* Option+Fn: media and brightness. */
 static const struct dfr_key dfr_keys_alt[] = {
-	{ "ESC", KEY_ESC, 1.4f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_ESC },
+	{ "BACK", 0, 1.4f, DFR_ACT_LAYER, "media", DFR_IND_NONE, DFR_COL_ESC },
 	{ DFR_GLYPH_BRDOWN, KEY_BRIGHTNESSDOWN, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_BRIGHT },
 	{ DFR_GLYPH_BRUP, KEY_BRIGHTNESSUP, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_BRIGHT },
 	{ DFR_GLYPH_PREV, KEY_PREVIOUSSONG, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_SKIP },
@@ -133,13 +135,17 @@ static const struct dfr_key dfr_keys_alt[] = {
 /* Command+Fn: AI and daily tools. F9 is deliberately a key rather than a
  * command so Omarchy's press=start/release=stop dictation semantics remain. */
 static const struct dfr_key dfr_keys_meta[] = {
-	{ "GPT", KEY_F23, 1.35f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_CHATGPT },
+	{ "BACK", 0, 1.2f, DFR_ACT_LAYER, "media", DFR_IND_NONE, DFR_COL_ESC },
+	{ "OPEN", 0, 1.2f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-open", DFR_IND_NONE, DFR_COL_CHATGPT },
 	{ "HOLD VOICE", KEY_F9, 2.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_VOICE },
-	{ "CLIP", 0, 1.15f, DFR_ACT_CMD, "omarchy menu clipboard", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "SHOT", 0, 1.15f, DFR_ACT_CMD, "omarchy menu toggle capture", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "TERM", 0, 1.15f, DFR_ACT_CMD, "omarchy launch terminal", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "EMOJI", 0, 1.25f, DFR_ACT_CMD, "omarchy menu emoji", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "OM", KEY_F24, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_OMARCHY },
+	{ "NEW", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-new", DFR_IND_NONE, DFR_COL_CHATGPT },
+	{ "CMD", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-command", DFR_IND_NONE, DFR_COL_CHATGPT },
+	{ "CLIP", 0, 1.15f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-clipboard", DFR_IND_NONE, DFR_COL_ACTION },
+	{ "SHOT", 0, 1.15f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-capture", DFR_IND_NONE, DFR_COL_ACTION },
+	{ "COPY", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-copy", DFR_IND_NONE, DFR_COL_ACTION },
+	{ "PASTE", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-paste", DFR_IND_NONE, DFR_COL_ACTION },
+	{ "TERM", 0, 1.15f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action terminal", DFR_IND_NONE, DFR_COL_ACTION },
+	{ "EMOJI", 0, 1.25f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-emoji", DFR_IND_NONE, DFR_COL_ACTION },
 };
 
 static const struct dfr_layout dfr_layouts[] = {
