@@ -143,7 +143,8 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
   daemon. A compiled and live-tested Omarchy overlay now provides direct
   workspace actions plus dedicated ChatGPT, media, dictation and system layers.
   Its tap-to-toggle Fn watcher filters false up/down pulses that previously
-  flooded the DRM driver. The session-only start/rollback path has been validated on the
+  flooded the DRM driver, and its T1 completion-queue drain prevents repeated
+  frames from wedging the bulk endpoint. The session-only start/rollback path has been validated on the
   originating MacBookPro13,2 without a reboot. It replaces the firmware strip,
   so boot persistence remains an optional second phase after longer testing. See
   [docs/CUSTOM-BAR.md](docs/CUSTOM-BAR.md), [the layout and previews](custom-bar/README.md),

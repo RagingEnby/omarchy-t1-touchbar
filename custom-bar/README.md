@@ -25,9 +25,15 @@ user. GPT and MEDIA are internal layer actions: they repaint the bar without
 launching anything until a button inside the selected menu is tapped.
 
 The patch also filters the T1 keyboard's false Fn up/down pulses. Tap Fn once
-to show F1-F12 and tap it again to return home; holding and releasing Fn never
-triggers additional redraws. The watcher re-arms only after 600 ms of quiet,
-preventing event chatter and `appletbdrm` timeouts.
+to show F1-F12 and tap it again to return home. Legitimate taps can be only
+90 ms apart. The renderer settles changes for 35 ms, keeps only the newest
+requested layout, and caps full-frame USB pushes at one every 120 ms. Rapid
+taps therefore remain responsive without flooding `appletbdrm`.
+
+The kernel half drains every queued T1 frame-completion/status packet after an
+upload. Reading only the first short packet eventually filled the bulk IN queue
+and made later bulk OUT transfers time out with `-110`. The combined fix passed
+12 alternating layouts at 250 ms and a 20-toggle test at 50 ms with no errors.
 
 ## Build and preview safely
 

@@ -32,8 +32,15 @@ display stack at commit `982d97a61a0c834d03e7cf7af5203b11ad7bae44` and adds:
 The home-row workspace actions dispatch directly to current Omarchy Hyprland,
 so they do not depend on synthetic F13-F22 bindings. GPT and MEDIA are true
 internal bar menus. The userspace patch also coalesces noisy Fn up/down events:
-tap Fn once for the function row and again for home. It re-arms after 600 ms of
-quiet and never redraws merely because Fn was released, preventing DRM floods.
+tap Fn once for the function row and again for home. A 90 ms edge filter keeps
+fast taps, while a latest-state-wins renderer schedules at most one full-frame
+USB push every 120 ms. Fn releases never redraw the bar.
+
+The same patch fixes the deeper freeze cause in `appletbdrm`: T1 can queue
+multiple short frame-completion/status packets, while the original adaptation
+read only one. That backlog eventually blocked the bulk OUT endpoint with
+`-ETIMEDOUT (-110)`. Draining the bounded completion queue after every frame
+kept both 250 ms switching and a 20-toggle/50 ms stress run error-free.
 
 ![Omarchy home row](../custom-bar/previews/home.png)
 

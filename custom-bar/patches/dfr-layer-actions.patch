@@ -1,5 +1,5 @@
 diff --git a/touch-bar/dfrd/dfr-fnd.c b/touch-bar/dfrd/dfr-fnd.c
-index 9e514c5..4effaad 100644
+index 9e514c5..8e94142 100644
 --- a/touch-bar/dfrd/dfr-fnd.c
 +++ b/touch-bar/dfrd/dfr-fnd.c
 @@ -1,16 +1,15 @@
@@ -23,25 +23,23 @@ index 9e514c5..4effaad 100644
   *
   * Any target layer that doesn't exist in dfr-layout.h falls back to "fn".
   * It sets the layout DETERMINISTICALLY by sending SIGRTMIN+<layout index> to
-@@ -24,14 +23,29 @@
+@@ -24,14 +23,27 @@
  #include <stdio.h>
  #include <stdlib.h>
  #include <string.h>
 +#include <stdint.h>
-+#include <errno.h>
  #include <fcntl.h>
  #include <unistd.h>
  #include <dirent.h>
  #include <signal.h>
-+#include <poll.h>
 +#include <time.h>
  #include <linux/input.h>
  #include <sys/ioctl.h>
  #include "dfr-layout.h"
  
-+/* The T1 keyboard emits false Fn up/down pulses. Toggle only on the first down
-+ * edge, then re-arm after the event stream has been quiet for this long. */
-+#define FN_REARM_QUIET_MS 600
++/* Ignore only implausibly close duplicate down edges. The renderer separately
++ * coalesces full-frame pushes, so legitimate fast taps are never discarded. */
++#define FN_TOGGLE_COOLDOWN_MS 90
 +
 +static int64_t now_ms(void)
 +{
@@ -53,7 +51,7 @@ index 9e514c5..4effaad 100644
  static int find_keyboard(char *out, size_t outsz)
  {
  	DIR *d = opendir("/dev/input");
-@@ -65,6 +79,14 @@ static int layer_idx(const char *name)
+@@ -65,6 +77,14 @@ static int layer_idx(const char *name)
  	return i < 0 ? 0 : i;
  }
  
@@ -68,7 +66,7 @@ index 9e514c5..4effaad 100644
  int main(int argc, char **argv)
  {
  	int verbose = 0;
-@@ -92,11 +114,33 @@ int main(int argc, char **argv)
+@@ -92,9 +112,11 @@ int main(int argc, char **argv)
  	if (verbose)
  		printf("TEST MODE: printing key events. Press Fn and modifier+Fn combos. Ctrl-C to stop.\n");
  	else
@@ -76,35 +74,20 @@ index 9e514c5..4effaad 100644
 +		printf("driving %d pid(s): tap Fn toggles fn/media; modifier+Fn selects an extra layer\n", npids);
  
  	int ctrl = 0, alt = 0, meta = 0;
-+	int armed = 1, fn_visible = 0, rearm_pending = 0;
-+	int64_t rearm_at = 0;
++	int fn_visible = 0;
++	int64_t last_toggle = -FN_TOGGLE_COOLDOWN_MS;
  	struct input_event ev;
--	while (read(fd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
-+	for (;;) {
-+		int timeout = -1;
-+		if (rearm_pending) {
-+			int64_t left = rearm_at - now_ms();
-+			timeout = left > 0 ? (int)left : 0;
-+		}
-+		struct pollfd pfd = { .fd = fd, .events = POLLIN };
-+		int pr = poll(&pfd, 1, timeout);
-+		if (pr < 0) {
-+			if (errno == EINTR) continue;
-+			break;
-+		}
-+		if (pr == 0) {
-+			rearm_pending = 0;
-+			armed = 1;
-+			if (verbose)
-+				printf("    -> Fn re-armed\n");
-+			continue;
-+		}
-+		if (read(fd, &ev, sizeof ev) != (ssize_t)sizeof ev)
-+			break;
+ 	while (read(fd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
  		if (ev.type != EV_KEY || ev.value == 2 /* autorepeat */) continue;
+@@ -107,23 +129,33 @@ int main(int argc, char **argv)
+ 		}
  
- 		/* track modifier state */
-@@ -113,17 +157,23 @@ int main(int argc, char **argv)
+ 		if (verbose && ev.code == KEY_FN)
+-			printf("  KEY_FN %s   (ctrl=%d alt=%d meta=%d)\n",
++			printf("  %lld.%06lld KEY_FN %s   (ctrl=%d alt=%d meta=%d)\n",
++			       (long long)ev.time.tv_sec, (long long)ev.time.tv_usec,
+ 			       ev.value ? "down" : "up", ctrl, alt, meta);
+ 		else if (verbose)
  			printf("  code=%u value=%d\n", ev.code, ev.value);
  
  		if (ev.code == KEY_FN) {
@@ -114,13 +97,16 @@ index 9e514c5..4effaad 100644
 -				idx = layer_idx(name);
 -			} else {                   /* Fn released: back to default */
 -				idx = idx_media;
-+			/* Every Fn edge extends the quiet period. No edge can redraw
-+			 * again until that period expires. */
-+			rearm_pending = 1;
-+			rearm_at = now_ms() + FN_REARM_QUIET_MS;
-+			if (ev.value && armed) {
++			if (ev.value) {
++				int64_t t = now_ms();
++				if (t - last_toggle < FN_TOGGLE_COOLDOWN_MS) {
++					if (verbose)
++						printf("    -> duplicate down ignored (%lld ms)\n",
++						       (long long)(t - last_toggle));
++					continue;
++				}
 +				int idx;
-+				armed = 0;
++				last_toggle = t;
 +				if (ctrl || alt || meta) {
 +					const char *name = ctrl ? "ctrl" : alt ? "alt" : "meta";
 +					idx = layer_idx(name);
@@ -138,6 +124,58 @@ index 9e514c5..4effaad 100644
  		}
  	}
  	return 0;
+diff --git a/touch-bar/dfrd/dfr-render.c b/touch-bar/dfrd/dfr-render.c
+index 1c3032e..32fc4e1 100644
+--- a/touch-bar/dfrd/dfr-render.c
++++ b/touch-bar/dfrd/dfr-render.c
+@@ -58,6 +58,8 @@
+ #include "dfr-layout.h"
+ 
+ #define DRIVER_NAME "appletbdrm"
++#define FRAME_SETTLE_MS 35
++#define FRAME_INTERVAL_MS 120
+ 
+ /* colors (XRGB8888) */
+ #define COL_BG  0xFF0A0A0Au
+@@ -803,8 +805,9 @@ int main(int argc, char **argv)
+ 	printf("\nSIGUSR1 cycles layout; Ctrl-C / SIGTERM exits (bar goes dark).\n");
+ 
+ 	int64_t next_ind = 0;   /* refresh immediately on first indicator layout */
++	int64_t redraw_at = 0, last_push = now_ms();
++	int redraw_pending = 0;
+ 	while (!g_stop) {
+-		int redraw = 0;
+ 		if (g_cycle) {
+ 			g_cycle = 0;
+ 			g_setlayout = (layout_idx + 1) % DFR_NLAYOUTS;
+@@ -816,19 +819,24 @@ int main(int argc, char **argv)
+ 				layout_idx = idx;
+ 				layout = &dfr_layouts[layout_idx];
+ 				next_ind = 0;   /* fresh values for the new layout */
+-				redraw = 1;
++				redraw_pending = 1;
++				redraw_at = now_ms() + FRAME_SETTLE_MS;
+ 				printf("set layout '%s'\n", layout->name);
+ 				fflush(stdout);
+ 			}
+ 		}
+ 		if (dfr_layout_has_indicators(layout) && now_ms() >= next_ind) {
+ 			if (ind_refresh())
+-				redraw = 1;
++				redraw_pending = 1;
+ 			next_ind = now_ms() + IND_REFRESH_MS;
+ 		}
+-		if (redraw) {
++		int64_t t = now_ms();
++		if (redraw_pending && t >= redraw_at &&
++		    t - last_push >= FRAME_INTERVAL_MS) {
+ 			draw_layout(layout);
+ 			drmModeDirtyFB(fd, fb_id, NULL, 0);
++			last_push = now_ms();
++			redraw_pending = 0;
+ 		}
+ 		usleep(30000);
+ 	}
 diff --git a/touch-bar/dfrd/dfr-touchd.c b/touch-bar/dfrd/dfr-touchd.c
 index d6ec3b3..9fdfba3 100644
 --- a/touch-bar/dfrd/dfr-touchd.c
@@ -208,3 +246,41 @@ index 6f702ac..8b7223a 100755
  # Block until a daemon exits on its own (crash). A trapped INT/TERM instead
  # runs on_signal, which exits directly — so we never fall through and spin here.
  # The EXIT trap (cleanup) reaps the rest on the way out.
+diff --git a/touch-bar/kernel/t1-touchbar-display/appletbdrm.c b/touch-bar/kernel/t1-touchbar-display/appletbdrm.c
+index 24282cd..81d2fe4 100644
+--- a/touch-bar/kernel/t1-touchbar-display/appletbdrm.c
++++ b/touch-bar/kernel/t1-touchbar-display/appletbdrm.c
+@@ -446,13 +446,32 @@ static int appletbdrm_flush_damage(struct appletbdrm_device *adev,
+ 	 */
+ 	{
+ 		struct usb_device *udev = adev_to_udev(adev);
+-		int ack_size = 0;
++		int ack_size = 0, drains;
+ 
+ 		ret = usb_bulk_msg(udev, usb_rcvbulkpipe(udev, adev->in_ep),
+ 				   response, sizeof(*response), &ack_size,
+ 				   APPLETBDRM_BULK_MSG_TIMEOUT);
+ 		if (ret)
+ 			goto end_fb_cpu_access;
++
++		/* A short packet completes one host read, but T1 can queue more
++		 * completion/status packets behind it. Drain those now; otherwise
++		 * several redraws fill the IN queue and the next bulk OUT stalls. */
++		for (drains = 0; drains < 8; drains++) {
++			int extra_size = 0;
++			int drain_ret = usb_bulk_msg(udev,
++					usb_rcvbulkpipe(udev, adev->in_ep),
++					response, sizeof(*response), &extra_size, 10);
++
++			if (drain_ret == -ETIMEDOUT)
++				break;
++			if (drain_ret) {
++				ret = drain_ret;
++				goto end_fb_cpu_access;
++			}
++			drm_dbg(drm, "drained extra frame response (%d bytes)\n",
++				extra_size);
++		}
+ 	}
+ 
+ end_fb_cpu_access:
