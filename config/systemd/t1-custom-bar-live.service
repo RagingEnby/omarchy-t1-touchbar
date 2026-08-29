@@ -1,0 +1,21 @@
+[Unit]
+Description=Omarchy programmable Apple T1 Touch Bar
+Documentation=https://github.com/cocoHMC/omarchy-t1-touchbar
+Wants=systemd-udev-settle.service
+After=systemd-modules-load.service systemd-udev-settle.service
+Conflicts=t1-touchbar-boot.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/omarchy-t1-touchbar/custom-bar-service-runner start
+ExecStopPost=-/usr/local/lib/omarchy-t1-touchbar/custom-bar-service-runner stop
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=2
+KillMode=mixed
+TimeoutStartSec=60
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

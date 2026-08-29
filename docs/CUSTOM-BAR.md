@@ -88,6 +88,27 @@ slot fix, configuration transition, DRM card and all three daemons. Its udev
 rule and service live under `/run`; it neither enables boot persistence nor
 reboots. Any failed gate attempts to restore the firmware configuration-1 bar.
 
+After the guarded live test succeeds, install the same built artifacts as a
+persistent boot service:
+
+```bash
+sudo ./scripts/install-custom-bar-service.sh
+systemctl status t1-custom-bar-live.service
+```
+
+The installer copies the reviewed binaries and kernel modules to
+`/usr/local/lib/omarchy-t1-touchbar`, installs the T1-only udev rule in `/etc`,
+and enables `t1-custom-bar-live.service` at `multi-user.target`. It does not
+depend on the Git checkout after installation. The service switches from the
+firmware strip to programmable USB configuration 2 on every boot and restores
+configuration 1 whenever it is stopped.
+
+To remove persistent mode and return to the firmware strip:
+
+```bash
+sudo ./scripts/uninstall-custom-bar-service.sh
+```
+
 On the originating MacBookPro13,2, the live test reached stable configuration
 2, created the 2170x60 DRM card, rendered the home row, opened the config-2
 touch digitizer, created its uinput keyboard, and started the Fn watcher. The
@@ -155,11 +176,13 @@ input cannot supply shell text, and desktop commands refuse to run as root.
 8. Add occupied-workspace IPC tinting after the static workspace row is proven.
 9. Only then enable the custom daemon at boot.
 
-Phases 1-6 and the phase-8 occupancy indicator are complete as a non-persistent
-live test on the originating Omarchy machine. Phase 7 still needs broader
-person-at-keyboard testing, and persistent
-installation remains gated: the upstream installer assumes a different DKMS
-source version and must not be run unchanged.
+Phases 1-6 and the phase-8 occupancy indicator are complete. The repository's
+Omarchy-specific persistent service packages the exact tested artifacts rather
+than invoking upstream's GNOME-oriented installer. Phase 7 still needs broader
+suspend and kernel-upgrade testing; reinstall after a kernel upgrade so the
+copied out-of-tree display modules match the running kernel. The service
+detects a mismatch and stops safely instead of crash-looping an incompatible
+module.
 
 The current upstream installer contains GNOME-specific commands and assumptions
 about an older `apple-ib-drv` DKMS source version. Running it unchanged on this

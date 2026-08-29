@@ -1,0 +1,153 @@
+#!/usr/bin/env bash
+# Root-only foreground runner for the persistent programmable T1 Touch Bar.
+set -euo pipefail
+
+install_root=${T1_CUSTOM_INSTALL_ROOT:-/usr/local/lib/omarchy-t1-touchbar}
+state_root=/run/t1-custom-bar
+udev_rule=/etc/udev/rules.d/99-touchbar-dfr.rules
+
+fail() {
+  printf 'ERROR: %s\n' "$*" >&2
+  exit 1
+}
+
+usb_path() {
+  local path
+  for path in /sys/bus/usb/devices/*; do
+    [[ -r $path/idVendor && -r $path/idProduct ]] || continue
+    [[ $(<"$path/idVendor") == 05ac && $(<"$path/idProduct") == 8600 ]] || continue
+    printf '%s\n' "$path"
+    return 0
+  done
+  return 1
+}
+
+wait_for_config() {
+  local expected=$1 path
+  for _ in {1..60}; do
+    path=$(usb_path 2>/dev/null || true)
+    if [[ -n $path && -r $path/bConfigurationValue ]] &&
+       [[ $(<"$path/bConfigurationValue") == "$expected" ]]; then
+      return 0
+    fi
+    sleep 0.25
+  done
+  return 1
+}
+
+cycle_internal_port() {
+  local device_path device_name bus root_port port_path
+  device_path=$(usb_path 2>/dev/null || true)
+  [[ -n $device_path ]] || return 1
+  device_name=${device_path##*/}
+  bus=${device_name%%-*}
+  root_port=${device_name#*-}
+  root_port=${root_port%%.*}
+  port_path="/sys/bus/usb/devices/usb$bus/$bus-0:1.0/usb$bus-port$root_port"
+  [[ -r $port_path/connect_type && $(<"$port_path/connect_type") == hardwired ]] || return 1
+  [[ -w $port_path/disable ]] || return 1
+  printf '1\n' > "$port_path/disable"
+  sleep 1
+  printf '0\n' > "$port_path/disable"
+}
+
+restore_firmware_bar() {
+  local hid_path hid driver path config
+
+  rmmod apple_dfr_cfgsel >/dev/null 2>&1 || true
+  rmmod appletbdrm >/dev/null 2>&1 || true
+
+  path=$(usb_path 2>/dev/null || true)
+  config=''
+  [[ -n $path && -r $path/bConfigurationValue ]] && config=$(<"$path/bConfigurationValue")
+  if [[ $config != 1 ]]; then
+    cycle_internal_port || true
+  fi
+
+  wait_for_config 1 || true
+  modprobe -a apple_ibridge apple_touchbar >/dev/null 2>&1 || true
+
+  # Give every physical iBridge HID back to the Apple bridge driver if the
+  # generic sensor driver claimed it while configuration 1 re-enumerated.
+  for hid_path in /sys/bus/hid/devices/0003:05AC:8600.*; do
+    [[ -e $hid_path ]] || continue
+    driver=$(basename "$(readlink -f "$hid_path/driver" 2>/dev/null)" 2>/dev/null || true)
+    [[ $driver == hid-sensor-hub ]] || continue
+    hid=${hid_path##*/}
+    printf '%s\n' "$hid" > /sys/bus/hid/drivers/hid-sensor-hub/unbind
+    printf '%s\n' "$hid" > /sys/bus/hid/drivers/apple-ibridge-hid/bind
+  done
+
+  rm -f -- \
+    "$state_root/dfr-render" \
+    "$state_root/dfr-touchd" \
+    "$state_root/dfr-fnd" \
+    "$state_root/dfrd-run.sh" \
+    "$state_root/touchbar-action"
+  rmdir -- "$state_root" 2>/dev/null || true
+}
+
+start_custom_bar() {
+  [[ $(id -u) -eq 0 ]] || fail 'persistent runner must execute as root'
+  [[ $(</sys/class/dmi/id/product_name) == MacBookPro13,2 ]] ||
+    fail 'persistent custom mode is guarded for MacBookPro13,2'
+
+  if [[ ! -r $install_root/kernel-release ]] ||
+     [[ $(<"$install_root/kernel-release") != "$(uname -r)" ]]; then
+    printf 'ERROR: custom Touch Bar modules do not match running kernel %s; rebuild and reinstall.\n' \
+      "$(uname -r)" >&2
+    exit 78
+  fi
+
+  local required
+  for required in \
+    dfr-render dfr-touchd dfr-fnd dfrd-run.sh touchbar-action \
+    appletbdrm.ko apple_dfr_cfgsel.ko; do
+    [[ -e $install_root/$required ]] || fail "missing installed artifact: $install_root/$required"
+  done
+  [[ -r $udev_rule ]] || fail "missing persistent udev rule: $udev_rule"
+
+  grep -q 'slot = dev_id - appleib_sub_hid_ids' \
+    /usr/src/apple-ib-drv-0.1/apple-ibridge.c ||
+    fail 'installed apple_ibridge lacks the safe sub-device slot fix'
+
+  local path
+  path=$(usb_path) || fail 'production T1 05ac:8600 not found'
+  [[ $(<"$path/bConfigurationValue") == 1 ]] ||
+    fail 'T1 is not in the known-good firmware configuration 1'
+
+  mkdir -p "$state_root"
+  install -m0755 "$install_root/dfr-render" "$state_root/dfr-render"
+  install -m0755 "$install_root/dfr-touchd" "$state_root/dfr-touchd"
+  install -m0755 "$install_root/dfr-fnd" "$state_root/dfr-fnd"
+  install -m0755 "$install_root/dfrd-run.sh" "$state_root/dfrd-run.sh"
+  install -m0755 "$install_root/touchbar-action" "$state_root/touchbar-action"
+  udevadm control --reload
+
+  modprobe -r apple_touchbar
+  modprobe -r apple_ibridge
+  insmod "$install_root/appletbdrm.ko"
+  insmod "$install_root/apple_dfr_cfgsel.ko"
+  wait_for_config 2 || fail 'T1 did not enter programmable USB configuration 2'
+  path=$(usb_path) || fail 'T1 disappeared after the configuration switch'
+  printf 'on\n' > "$path/power/control"
+
+  # The DRM add event and the final udev database update can race by a few
+  # milliseconds. Re-emit a bounded change event so dfrd always sees the
+  # dedicated seat before opening the card.
+  local card driver
+  for card in /sys/class/drm/card[0-9]*; do
+    driver=$(basename "$(readlink -f "$card/device/driver" 2>/dev/null)" 2>/dev/null || true)
+    [[ $driver == appletbdrm ]] || continue
+    udevadm trigger --action=change --settle "$card"
+    break
+  done
+
+  exec "$state_root/dfrd-run.sh" media
+}
+
+case ${1:-} in
+  start) start_custom_bar ;;
+  stop) restore_firmware_bar ;;
+  *) fail 'usage: custom-bar-service-runner {start|stop}' ;;
+esac

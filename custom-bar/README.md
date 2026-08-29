@@ -124,6 +124,19 @@ restores the firmware bar if a validation gate fails. Return manually with:
 sudo ./scripts/live-custom-bar.sh stop
 ```
 
+Once the live test is proven on a `MacBookPro13,2`, make it survive shutdowns
+and reboots with:
+
+```bash
+sudo ./scripts/install-custom-bar-service.sh
+```
+
+Rollback to Apple's firmware-rendered strip with:
+
+```bash
+sudo ./scripts/uninstall-custom-bar-service.sh
+```
+
 ## Previews
 
 Home row:
