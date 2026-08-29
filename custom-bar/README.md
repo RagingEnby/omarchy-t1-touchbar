@@ -24,9 +24,10 @@ Workspace and Omarchy buttons launch scoped commands as the logged-in desktop
 user. GPT and MEDIA are internal layer actions: they repaint the bar without
 launching anything until a button inside the selected menu is tapped.
 
-The patch also filters the T1 keyboard's short false Fn-release pulses. Fn
-switches to F1-F12 immediately, while returning home requires a 600 ms quiet
-release. This prevents repeated display redraws and `appletbdrm` timeouts.
+The patch also filters the T1 keyboard's false Fn up/down pulses. Tap Fn once
+to show F1-F12 and tap it again to return home; holding and releasing Fn never
+triggers additional redraws. The watcher re-arms only after 600 ms of quiet,
+preventing event chatter and `appletbdrm` timeouts.
 
 ## Build and preview safely
 

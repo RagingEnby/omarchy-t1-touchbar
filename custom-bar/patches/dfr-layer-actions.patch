@@ -1,8 +1,29 @@
 diff --git a/touch-bar/dfrd/dfr-fnd.c b/touch-bar/dfrd/dfr-fnd.c
-index 9e514c5..fd4e60c 100644
+index 9e514c5..4effaad 100644
 --- a/touch-bar/dfrd/dfr-fnd.c
 +++ b/touch-bar/dfrd/dfr-fnd.c
-@@ -24,14 +24,29 @@
+@@ -1,16 +1,15 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * dfr-fnd — momentary Fn-layer switcher for the T1 Touch Bar.
++ * dfr-fnd — debounced Fn-layer toggle for the T1 Touch Bar.
+  *
+  * Watches the Apple SPI Keyboard and switches the rendered Touch Bar layout to
+- * mimic (and extend) macOS: the `media` control strip by default, and a layer
+- * chosen by which modifiers are held WHILE Fn is pressed:
++ * use the `media` control strip by default, and toggles a layer when Fn is
++ * pressed. Release events never redraw the display:
+  *
+- *     Fn            -> "fn"      (F1-F12)
++ *     Fn            -> toggle "fn" / "media"
+  *     Ctrl + Fn     -> "ctrl"
+  *     Alt/Opt + Fn  -> "alt"
+  *     Cmd/Meta + Fn -> "meta"
+- *     (Fn released) -> "media"   (the default)
+  *
+  * Any target layer that doesn't exist in dfr-layout.h falls back to "fn".
+  * It sets the layout DETERMINISTICALLY by sending SIGRTMIN+<layout index> to
+@@ -24,14 +23,29 @@
  #include <stdio.h>
  #include <stdlib.h>
  #include <string.h>
@@ -18,9 +39,9 @@ index 9e514c5..fd4e60c 100644
  #include <sys/ioctl.h>
  #include "dfr-layout.h"
  
-+/* The T1 keyboard can emit short false Fn-up pulses while Fn is held. Keep
-+ * the Fn layer immediate, but require a quiet release before redrawing home. */
-+#define FN_RELEASE_GRACE_MS 600
++/* The T1 keyboard emits false Fn up/down pulses. Toggle only on the first down
++ * edge, then re-arm after the event stream has been quiet for this long. */
++#define FN_REARM_QUIET_MS 600
 +
 +static int64_t now_ms(void)
 +{
@@ -32,7 +53,7 @@ index 9e514c5..fd4e60c 100644
  static int find_keyboard(char *out, size_t outsz)
  {
  	DIR *d = opendir("/dev/input");
-@@ -65,6 +80,14 @@ static int layer_idx(const char *name)
+@@ -65,6 +79,14 @@ static int layer_idx(const char *name)
  	return i < 0 ? 0 : i;
  }
  
@@ -47,18 +68,22 @@ index 9e514c5..fd4e60c 100644
  int main(int argc, char **argv)
  {
  	int verbose = 0;
-@@ -95,8 +118,29 @@ int main(int argc, char **argv)
- 		printf("driving %d pid(s): Fn->fn, Ctrl+Fn->ctrl, Alt+Fn->alt, Cmd+Fn->meta, release->media\n", npids);
+@@ -92,11 +114,33 @@ int main(int argc, char **argv)
+ 	if (verbose)
+ 		printf("TEST MODE: printing key events. Press Fn and modifier+Fn combos. Ctrl-C to stop.\n");
+ 	else
+-		printf("driving %d pid(s): Fn->fn, Ctrl+Fn->ctrl, Alt+Fn->alt, Cmd+Fn->meta, release->media\n", npids);
++		printf("driving %d pid(s): tap Fn toggles fn/media; modifier+Fn selects an extra layer\n", npids);
  
  	int ctrl = 0, alt = 0, meta = 0;
-+	int fn_active = 0, release_pending = 0;
-+	int64_t release_at = 0;
++	int armed = 1, fn_visible = 0, rearm_pending = 0;
++	int64_t rearm_at = 0;
  	struct input_event ev;
 -	while (read(fd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
 +	for (;;) {
 +		int timeout = -1;
-+		if (release_pending) {
-+			int64_t left = release_at - now_ms();
++		if (rearm_pending) {
++			int64_t left = rearm_at - now_ms();
 +			timeout = left > 0 ? (int)left : 0;
 +		}
 +		struct pollfd pfd = { .fd = fd, .events = POLLIN };
@@ -68,9 +93,10 @@ index 9e514c5..fd4e60c 100644
 +			break;
 +		}
 +		if (pr == 0) {
-+			release_pending = 0;
-+			fn_active = 0;
-+			signal_layer(pids, npids, idx_media, verbose);
++			rearm_pending = 0;
++			armed = 1;
++			if (verbose)
++				printf("    -> Fn re-armed\n");
 +			continue;
 +		}
 +		if (read(fd, &ev, sizeof ev) != (ssize_t)sizeof ev)
@@ -78,29 +104,32 @@ index 9e514c5..fd4e60c 100644
  		if (ev.type != EV_KEY || ev.value == 2 /* autorepeat */) continue;
  
  		/* track modifier state */
-@@ -113,17 +157,21 @@ int main(int argc, char **argv)
+@@ -113,17 +157,23 @@ int main(int argc, char **argv)
  			printf("  code=%u value=%d\n", ev.code, ev.value);
  
  		if (ev.code == KEY_FN) {
 -			int idx;
 -			if (ev.value) {            /* Fn pressed: choose layer by modifier */
-+			if (ev.value) {            /* Fn down is immediate */
-+				release_pending = 0;  /* cancel a noisy false release */
-+				if (fn_active)
-+					continue;
- 				const char *name = ctrl ? "ctrl" : alt ? "alt" : meta ? "meta" : "fn";
+-				const char *name = ctrl ? "ctrl" : alt ? "alt" : meta ? "meta" : "fn";
 -				idx = layer_idx(name);
 -			} else {                   /* Fn released: back to default */
 -				idx = idx_media;
-+				fn_active = 1;
-+				signal_layer(pids, npids, layer_idx(name), verbose);
-+			} else if (fn_active) {
-+				/* Delay only the release. Another down event within the
-+				 * grace period proves this was T1 event chatter. */
-+				release_pending = 1;
-+				release_at = now_ms() + FN_RELEASE_GRACE_MS;
-+				if (verbose)
-+					printf("    -> release pending (%d ms)\n", FN_RELEASE_GRACE_MS);
++			/* Every Fn edge extends the quiet period. No edge can redraw
++			 * again until that period expires. */
++			rearm_pending = 1;
++			rearm_at = now_ms() + FN_REARM_QUIET_MS;
++			if (ev.value && armed) {
++				int idx;
++				armed = 0;
++				if (ctrl || alt || meta) {
++					const char *name = ctrl ? "ctrl" : alt ? "alt" : "meta";
++					idx = layer_idx(name);
++					fn_visible = 0;
++				} else {
++					fn_visible = !fn_visible;
++					idx = fn_visible ? layer_idx("fn") : idx_media;
++				}
++				signal_layer(pids, npids, idx, verbose);
  			}
 -			for (int i = 0; i < npids; i++)
 -				kill(pids[i], SIGRTMIN + idx);
@@ -158,7 +187,7 @@ index d6ec3b3..9fdfba3 100644
  				 * one launch per contact, the time check guards
  				 * against bounce/double-report */
 diff --git a/touch-bar/dfrd/dfrd-run.sh b/touch-bar/dfrd/dfrd-run.sh
-index 6f702ac..e18a684 100755
+index 6f702ac..8b7223a 100755
 --- a/touch-bar/dfrd/dfrd-run.sh
 +++ b/touch-bar/dfrd/dfrd-run.sh
 @@ -99,7 +99,7 @@ if ! kill -0 "$RPID" 2>/dev/null; then
@@ -170,3 +199,12 @@ index 6f702ac..e18a684 100755
  TPID=$!
  sleep 1
  if ! kill -0 "$TPID" 2>/dev/null; then
+@@ -119,7 +119,7 @@ if ! kill -0 "$FPID" 2>/dev/null; then
+ fi
+ 
+ echo "dfrd: up. render=$RPID touchd=$TPID fnd=${FPID:-none}. Ctrl-C to stop."
+-echo "dfrd: default 'media' strip; HOLD Fn for F-keys (Ctrl/Alt/Cmd+Fn = extra layers once defined)."
++echo "dfrd: default 'media' strip; TAP Fn to toggle F-keys (tap again for home)."
+ # Block until a daemon exits on its own (crash). A trapped INT/TERM instead
+ # runs on_signal, which exits directly — so we never fall through and spin here.
+ # The EXIT trap (cleanup) reaps the rest on the way out.

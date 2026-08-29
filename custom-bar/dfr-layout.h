@@ -8,7 +8,7 @@
  *
  * dfr-fnd expects the layout names below. We retain those internal names while
  * assigning Omarchy-friendly roles:
- *   media = home row (default after Fn is released)
+ *   media = home row (default; tap Fn again to return)
  *   fn    = Escape and F1-F12
  *   ctrl  = live system row
  *   alt   = media/brightness row

@@ -31,9 +31,9 @@ display stack at commit `982d97a61a0c834d03e7cf7af5203b11ad7bae44` and adds:
 
 The home-row workspace actions dispatch directly to current Omarchy Hyprland,
 so they do not depend on synthetic F13-F22 bindings. GPT and MEDIA are true
-internal bar menus. The userspace patch also coalesces noisy Fn release events:
-the function row appears immediately, and the home row returns after a 600 ms
-quiet release instead of flooding the DRM device with redraws.
+internal bar menus. The userspace patch also coalesces noisy Fn up/down events:
+tap Fn once for the function row and again for home. It re-arms after 600 ms of
+quiet and never redraws merely because Fn was released, preventing DRM floods.
 
 ![Omarchy home row](../custom-bar/previews/home.png)
 

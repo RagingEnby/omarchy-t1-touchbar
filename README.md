@@ -142,8 +142,8 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
   `appletbdrm`, a config-selection driver, and a userspace renderer/touch
   daemon. A compiled and live-tested Omarchy overlay now provides direct
   workspace actions plus dedicated ChatGPT, media, dictation and system layers.
-  Its Fn watcher filters false release pulses that previously flooded the DRM
-  driver. The session-only start/rollback path has been validated on the
+  Its tap-to-toggle Fn watcher filters false up/down pulses that previously
+  flooded the DRM driver. The session-only start/rollback path has been validated on the
   originating MacBookPro13,2 without a reboot. It replaces the firmware strip,
   so boot persistence remains an optional second phase after longer testing. See
   [docs/CUSTOM-BAR.md](docs/CUSTOM-BAR.md), [the layout and previews](custom-bar/README.md),
