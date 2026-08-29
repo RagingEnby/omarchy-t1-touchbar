@@ -42,6 +42,46 @@ Omarchy's Voxtype recorder. Tap once to start, dictate, and tap again to stop,
 transcribe, and type into the focused field. This avoids synthetic F9 timing;
 the Fn row still exposes an ordinary F9 key for applications that need it.
 
+## Button guide
+
+The complete custom interface is source-controlled in `dfr-layout.h`; the
+commands it may launch are allowlisted in `touchbar-action.sh`.
+
+| Row | Button | Action |
+|---|---|---|
+| Home | `ESC` | Sends Escape |
+| Home | `1`–`10` tap | Opens that Hyprland workspace |
+| Home | `1`–`10` drag | Moves all non-pinned windows from the first workspace to the drop workspace and opens it |
+| Home | highlighted number | Indicates that workspace currently contains at least one app window |
+| Home | `GPT` | Opens the GPT/productivity row |
+| Home | `MEDIA` | Opens brightness, playback, and volume controls |
+| Home | `OM` | Opens the main Omarchy menu |
+| Home | microphone | Starts or stops Omarchy/Voxtype dictation |
+| Function | `ESC`, `F1`–`F12` | Sends the corresponding ordinary keyboard key |
+| System | `BACK` | Returns home |
+| System | `KBD`, `WIFI`, `BT` | Opens the Omarchy hardware menu |
+| System | `BAT` | Opens the Omarchy system menu |
+| System | `CAPTURE` | Opens Omarchy capture tools |
+| System | `LOCK` | Locks the computer |
+| Media | `BACK` | Returns home |
+| Media | brightness icons | Changes display brightness |
+| Media | previous/play/next | Controls media playback |
+| Media | mute/volume icons | Controls audio volume |
+| GPT | `BACK` | Returns home |
+| GPT | `OPEN` | Opens or focuses ChatGPT |
+| GPT | `VOICE` | Starts or stops Omarchy/Voxtype dictation |
+| GPT | `NEW` | Sends ChatGPT's new-chat shortcut |
+| GPT | `CMD` | Sends ChatGPT's command/search shortcut |
+| GPT | `CLIP` | Opens Omarchy clipboard history |
+| GPT | `SHOT` | Opens Omarchy capture tools |
+| GPT | `COPY`, `PASTE` | Sends the corresponding ChatGPT shortcut |
+| GPT | `TERM` | Opens the Omarchy terminal |
+| GPT | `EMOJI` | Opens the Omarchy emoji picker |
+
+Tap Fn to switch between the home and function rows. `Ctrl+Fn` opens the
+system row. `GPT`, `MEDIA`, and `BACK` change rows entirely inside the Touch
+Bar; they do not launch desktop windows by themselves.
+
 The patch also filters the T1 keyboard's false Fn up/down pulses. Tap Fn once
 to show F1-F12 and tap it again to return home. Legitimate taps can be only
 90 ms apart. The renderer settles changes for 35 ms, keeps only the newest
@@ -68,6 +108,14 @@ After reviewing the build and rollback, a session-only test can be started:
 ```bash
 sudo ./scripts/live-custom-bar.sh start
 ```
+
+For a friend to reproduce the tested path, they need the exact supported T1
+model, an already activated production iBridge (`05ac:8600`), Omarchy/Arch,
+the required build packages installed by `scripts/setup-omarchy.sh`, and a
+working `voxtype` installation if they want dictation. ChatGPT is optional;
+its buttons simply cannot focus an app that is not installed. Start with the
+root README's read-only `scripts/status.sh` check and follow the path matching
+the reported USB state. Do not copy another Mac's personalized T1 files.
 
 It uses only `/run`, does not configure boot persistence, and automatically
 restores the firmware bar if a validation gate fails. Return manually with:

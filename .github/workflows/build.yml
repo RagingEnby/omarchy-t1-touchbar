@@ -7,6 +7,19 @@ on:
     - cron: '0 0 1 * *'
 
 jobs:
+  validate-custom-touchbar:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: install custom-bar build dependencies
+      run: |
+          sudo apt-get update
+          sudo apt-get install build-essential git libdrm-dev libfontconfig1-dev libfreetype-dev fonts-dejavu-core
+    - name: validate scripts and build custom-bar userspace
+      run: |
+          bash -n scripts/*.sh custom-bar/touchbar-action.sh
+          T1_CUSTOM_SKIP_KERNEL=1 ./scripts/build-custom-bar.sh
+
   build-linux-ubuntu:
     runs-on: ubuntu-latest
     steps:
@@ -193,6 +206,10 @@ jobs:
         name: idevicerestore-latest_macOS
         path: idevicerestore.tar
   build-windows:
+    # T1 recovery and the custom-display stack are Linux-only. The inherited
+    # upstream Windows matrix cannot provide POSIX durability primitives used
+    # to protect device-personalized files, so it is intentionally unsupported.
+    if: ${{ false }}
     runs-on: windows-latest
     defaults:
       run:

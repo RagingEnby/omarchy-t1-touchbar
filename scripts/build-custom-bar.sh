@@ -7,6 +7,7 @@ work_root=${T1_CUSTOM_WORKDIR:-"$repo_root/.t1-work/custom-bar"}
 source_root="$work_root/macbook-t1-linux"
 dfrd_root="$source_root/touch-bar/dfrd"
 kmod_root="$source_root/touch-bar/kernel/t1-touchbar-display"
+skip_kernel=${T1_CUSTOM_SKIP_KERNEL:-0}
 preview_root="$work_root/previews"
 upstream=https://github.com/xeeban/macbook-t1-linux.git
 pin=982d97a61a0c834d03e7cf7af5203b11ad7bae44
@@ -53,8 +54,10 @@ install -m0644 "$repo_root/custom-bar/dfr-layout.h" "$dfrd_root/dfr-layout.h"
 
 make -C "$dfrd_root" clean
 make -C "$dfrd_root" -j"$(nproc)"
-make -C "$kmod_root" clean
-make -C "$kmod_root" -j"$(nproc)"
+if [[ $skip_kernel != 1 ]]; then
+  make -C "$kmod_root" clean
+  make -C "$kmod_root" -j"$(nproc)"
+fi
 
 cc -O2 -Wall -Wextra -Werror \
   -I"$repo_root/custom-bar" \
@@ -70,6 +73,10 @@ done
 
 printf '\nCustom bar built without touching the live T1.\n'
 printf 'Binaries: %s/{dfr-render,dfr-touchd,dfr-fnd}\n' "$dfrd_root"
-printf 'Kernel modules: %s/{appletbdrm,apple_dfr_cfgsel}.ko\n' "$kmod_root"
+if [[ $skip_kernel == 1 ]]; then
+  printf 'Kernel modules: skipped (T1_CUSTOM_SKIP_KERNEL=1).\n'
+else
+  printf 'Kernel modules: %s/{appletbdrm,apple_dfr_cfgsel}.ko\n' "$kmod_root"
+fi
 printf 'Previews: %s\n' "$preview_root"
 printf 'USB configuration remains unchanged.\n'

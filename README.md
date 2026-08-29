@@ -9,6 +9,32 @@ problem. The driver can bind only after the T1 has passed Apple secure boot and
 enumerated as production iBridge USB device `05ac:8600`. A T1 stuck at recovery
 device `05ac:1281` needs its own EmbeddedOS provisioned and booted first.
 
+## The simple mental model
+
+There are two computers inside a Touch Bar MacBook Pro:
+
+1. The Intel Mac runs the main operating system. On the tested machine that is
+   Omarchy/Arch Linux—not macOS, a virtual machine, or a hidden second desktop.
+2. The Apple T1 coprocessor runs a small Apple EmbeddedOS. It manages hardware
+   including the Touch Bar and communicates with Linux over an internal USB
+   connection.
+
+That is “two operating systems” only in the same sense that a laptop also has
+firmware inside its keyboard, SSD, or Wi-Fi controller. There is one normal
+computer and desktop: Linux. The T1's EmbeddedOS is appliance firmware on a
+separate chip; it cannot run Mac applications or provide a macOS desktop.
+
+In the stock strip mode, T1 firmware draws the controls. In custom-display
+mode, Linux sends pixels to the T1 panel and reads finger coordinates back:
+
+```text
+finger -> T1 touch hardware -> Linux touch daemon -> Hyprland/Omarchy action
+Linux renderer -> tiny DRM display -> T1 panel -> pixels on the Touch Bar
+```
+
+The T1 firmware is still required in custom mode because it boots and exposes
+the hardware. Linux then owns the visible layout and button behavior.
+
 > [!CAUTION]
 > The recovery path flashes the T1 coprocessor. It is not a host OS installer,
 > but an incorrect implementation can still leave the Touch Bar and iBridge
