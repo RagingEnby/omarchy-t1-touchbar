@@ -13,6 +13,7 @@ fi
 
 has_8600=0
 has_1281=0
+ibridge_config=unknown
 lsusb -d 05ac:8600 >/dev/null 2>&1 && has_8600=1
 lsusb -d 05ac:1281 >/dev/null 2>&1 && has_1281=1
 
@@ -31,6 +32,7 @@ if (( has_8600 == 1 )); then
     config=unknown
     power=unknown
     [[ -r $node/bConfigurationValue ]] && config=$(<"$node/bConfigurationValue")
+    ibridge_config=$config
     [[ -r $node/power/control ]] && power=$(<"$node/power/control")
     printf 'iBridge USB: configuration=%s power/control=%s\n' "$config" "$power"
   done
@@ -48,6 +50,28 @@ for module in apple_ibridge apple_touchbar; do
     printf 'Module %s: not loaded\n' "$module"
   fi
 done
+
+custom_cfgsel=0
+custom_drm=0
+custom_service=0
+custom_input=0
+if lsmod 2>/dev/null | awk '$1 == "apple_dfr_cfgsel" { found=1 } END { exit !found }'; then
+  custom_cfgsel=1
+fi
+if lsmod 2>/dev/null | awk '$1 == "appletbdrm" { found=1 } END { exit !found }'; then
+  custom_drm=1
+fi
+if systemctl is-active --quiet t1-custom-bar-live.service 2>/dev/null ||
+   systemctl is-active --quiet dfrd.service 2>/dev/null; then
+  custom_service=1
+fi
+if rg -q 'T1 Touch Bar \(dfrd\)' /proc/bus/input/devices 2>/dev/null; then
+  custom_input=1
+fi
+if [[ $ibridge_config == 2 ]]; then
+  printf 'Custom display: cfgsel=%s DRM=%s service=%s input=%s\n' \
+    "$custom_cfgsel" "$custom_drm" "$custom_service" "$custom_input"
+fi
 
 physical=0
 virtual=0
@@ -114,7 +138,10 @@ else
   fi
 fi
 
-if (( has_8600 == 1 && physical >= 2 && virtual >= 1 )); then
+if (( has_8600 == 1 && custom_cfgsel == 1 && custom_drm == 1 && custom_service == 1 && custom_input == 1 )) &&
+   [[ $ibridge_config == 2 ]]; then
+  printf 'Overall: healthy live programmable Touch Bar topology\n'
+elif (( has_8600 == 1 && physical >= 2 && virtual >= 1 )); then
   printf 'Overall: healthy live firmware Touch Bar topology\n'
 elif (( has_1281 == 1 )); then
   printf 'Overall: T1 recovery; driver alone cannot light the bar\n'

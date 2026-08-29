@@ -29,7 +29,9 @@ The complete live path was verified on:
   `EFI/APPLE/EMBEDDEDOS`
 
 The live bar works, including the firmware Esc key and the Fn/function-key
-layout. The originating machine has deliberately not yet been rebooted for the
+layout. The shipped configuration defaults to visible F1-F12 (`fnmode=2`),
+with Fn temporarily revealing the special brightness/media controls. The
+originating machine has deliberately not yet been rebooted for the
 final cold-boot persistence test. The EFI setup is correct and persistence is
 expected, but that one remaining result should be reported honestly rather
 than presented as already observed.
@@ -138,10 +140,13 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
   project, not a PAM shortcut. See [docs/TOUCH-ID.md](docs/TOUCH-ID.md).
 - **Custom graphics and touch:** feasible today through T1 USB configuration 2,
   `appletbdrm`, a config-selection driver, and a userspace renderer/touch
-  daemon. An Omarchy layer can show workspace buttons and emit F13-F24 or call
-  Hyprland dispatchers. It replaces the firmware strip, so it is an optional
-  second phase. See [docs/CUSTOM-BAR.md](docs/CUSTOM-BAR.md) and the sample
-  [Omarchy bindings](examples/hypr/touchbar-workspaces.lua).
+  daemon. A compiled and offline-tested Omarchy overlay now provides workspace,
+  ChatGPT, dictation, media and system layers. Its session-only start/rollback
+  path has also been live-validated on the originating MacBookPro13,2 without a
+  reboot. It replaces the firmware strip, so boot persistence remains an
+  optional second phase after person-at-keyboard testing. See
+  [docs/CUSTOM-BAR.md](docs/CUSTOM-BAR.md), [the layout and previews](custom-bar/README.md),
+  and the [custom Omarchy bindings](examples/hypr/touchbar-custom.lua).
 
 ## Privacy and safety
 
