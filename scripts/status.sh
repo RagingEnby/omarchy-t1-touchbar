@@ -14,6 +14,14 @@ if [[ -r /sys/power/mem_sleep ]]; then
     printf 'Sleep warning: deep S3 leaves the T1 display black until reboot; select s2idle\n'
   fi
 fi
+if grep -qw pcie_port_pm=off /proc/cmdline; then
+  printf 'Alpine Ridge boot guard: active (pcie_port_pm=off)\n'
+elif [[ -r /etc/limine-entry-tool.d/20-macbookpro13-t1-suspend.conf ]] &&
+     grep -qw pcie_port_pm=off /etc/limine-entry-tool.d/20-macbookpro13-t1-suspend.conf; then
+  printf 'Alpine Ridge boot guard: staged; reboot required to activate\n'
+else
+  printf 'Alpine Ridge boot guard: missing\n'
+fi
 if command -v omarchy >/dev/null 2>&1; then
   printf 'Omarchy: %s\n' "$(omarchy version 2>/dev/null || printf unknown)"
 fi
@@ -78,6 +86,16 @@ fi
 if [[ $ibridge_config == 2 ]]; then
   printf 'Custom display: cfgsel=%s DRM=%s service=%s input=%s\n' \
     "$custom_cfgsel" "$custom_drm" "$custom_service" "$custom_input"
+  if systemctl is-active --quiet t1-custom-bar-lid.service 2>/dev/null; then
+    printf 'Lid recovery: active\n'
+  else
+    printf 'Lid recovery: inactive\n'
+  fi
+fi
+
+if [[ -r /etc/modules-load.d/brcmfmac.conf ]] &&
+   rg -q '^[[:space:]]*brcmfmac[[:space:]]*$' /etc/modules-load.d/brcmfmac.conf; then
+  printf 'Wi-Fi early load: configured\n'
 fi
 
 physical=0

@@ -10,6 +10,7 @@ kmod_root="$source_root/touch-bar/kernel/t1-touchbar-display"
 install_root=/usr/local/lib/omarchy-t1-touchbar
 unit=t1-custom-bar-live.service
 resume_unit=t1-custom-bar-resume.service
+lid_unit=t1-custom-bar-lid.service
 sleep_policy=80-t1-touchbar-sleep.conf
 
 fail() {
@@ -41,6 +42,8 @@ install -m0755 \
   "$dfrd_root/dfr-fnd" \
   "$dfrd_root/dfrd-run.sh" \
   "$repo_root/scripts/custom-bar-service-runner" \
+  "$repo_root/scripts/t1-lid-watcher" \
+  "$repo_root/scripts/t1-custom-bar-recover" \
   "$install_root/"
 install -m0755 "$repo_root/custom-bar/touchbar-action.sh" \
   "$install_root/touchbar-action"
@@ -54,7 +57,17 @@ install -m0644 "$dfrd_root/99-touchbar-dfr.rules" \
 install -m0644 \
   "$repo_root/config/systemd/$unit" \
   "$repo_root/config/systemd/$resume_unit" \
+  "$repo_root/config/systemd/$lid_unit" \
   /etc/systemd/system/
+install -m0644 "$repo_root/config/brcmfmac.modules-load.conf" \
+  /etc/modules-load.d/brcmfmac.conf
+install -m0644 "$repo_root/config/86-mbp132-thunderbolt-d3cold.rules" \
+  /etc/udev/rules.d/86-mbp132-thunderbolt-d3cold.rules
+install -m0755 "$repo_root/scripts/mbp132-thunderbolt-sleep" \
+  /usr/lib/systemd/system-sleep/mbp132-thunderbolt-sleep
+install -d -m0755 /etc/limine-entry-tool.d
+install -m0644 "$repo_root/config/limine/20-macbookpro13-t1-suspend.conf" \
+  /etc/limine-entry-tool.d/20-macbookpro13-t1-suspend.conf
 install -d -m0755 /etc/systemd/sleep.conf.d
 install -m0644 "$repo_root/config/systemd/$sleep_policy" \
   "/etc/systemd/sleep.conf.d/$sleep_policy"
@@ -63,11 +76,20 @@ printf s2idle > /sys/power/mem_sleep
 systemctl disable --now t1-touchbar-boot.service >/dev/null 2>&1 || true
 systemctl daemon-reload
 udevadm control --reload
+udevadm trigger --subsystem-match=pci
 systemctl enable --now "$unit"
 systemctl enable "$resume_unit"
+systemctl enable --now "$lid_unit"
+
+if command -v limine-mkinitcpio >/dev/null 2>&1; then
+  limine-mkinitcpio
+fi
 
 printf 'Persistent custom Touch Bar installed and started.\n'
 printf 'Service: %s (enabled at every boot)\n' "$unit"
 printf 'Sleep: s2idle (deep S3 cannot restore the T1 display)\n'
 printf 'Resume: %s (restarts the renderer after wake)\n' "$resume_unit"
+printf 'Lid: %s (final restart after every physical reopen)\n' "$lid_unit"
+printf 'Wi-Fi: brcmfmac forced during early boot\n'
+printf 'PCIe: guarded Alpine Ridge pre-remove/rescan hook installed\n'
 printf 'Rollback: sudo %s/uninstall-custom-bar-service.sh\n' "$repo_root/scripts"

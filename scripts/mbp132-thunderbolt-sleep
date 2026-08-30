@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# MacBookPro13,2 dual Alpine Ridge s2idle workaround.
+# Never remove a Thunderbolt tree containing a block device.
+set -u
+
+[[ $(cat /sys/class/dmi/id/product_name 2>/dev/null) == MacBookPro13,2 ]] || exit 0
+[[ ${2:-} == suspend ]] || exit 0
+
+marker=/run/mbp132-thunderbolt-removed
+roots=(0000:03:00.0 0000:79:00.0)
+
+log_error() {
+  logger -t mbp132-thunderbolt-sleep -p user.err -- "$*"
+}
+
+has_thunderbolt_storage() {
+  local block path
+  for block in /sys/class/block/*; do
+    [[ -e $block/device ]] || continue
+    path=$(readlink -f "$block/device")
+    case $path in
+      */0000:03:00.0/*|*/0000:79:00.0/*) return 0 ;;
+    esac
+  done
+  return 1
+}
+
+case $1 in
+  pre)
+    rm -f -- "$marker"
+    if has_thunderbolt_storage; then
+      log_error 'Thunderbolt storage is present; refusing PCI removal. Disconnect it before suspend.'
+      exit 0
+    fi
+    for root in "${roots[@]}"; do
+      if [[ ! -w /sys/bus/pci/devices/$root/remove ]]; then
+        log_error "healthy Thunderbolt root $root is unavailable; skipping removal"
+        exit 0
+      fi
+    done
+    removed=0
+    for root in "${roots[@]}"; do
+      if printf 1 > "/sys/bus/pci/devices/$root/remove"; then
+        removed=1
+      else
+        log_error "PCI removal failed for $root"
+      fi
+    done
+    (( removed == 1 )) && touch "$marker"
+    ;;
+  post)
+    [[ -e $marker ]] || exit 0
+    sleep 1
+    printf 1 > /sys/bus/pci/rescan || log_error 'first PCI rescan failed'
+    sleep 2
+    printf 1 > /sys/bus/pci/rescan || log_error 'second PCI rescan failed'
+    sleep 2
+    for device in 0000:05:00.0 0000:06:00.0 0000:7b:00.0 0000:7c:00.0; do
+      [[ -e /sys/bus/pci/devices/$device ]] || log_error "Thunderbolt descendant $device did not return"
+    done
+    ;;
+esac

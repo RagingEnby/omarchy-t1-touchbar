@@ -8,8 +8,8 @@ ConditionPathExists=/etc/systemd/system/t1-custom-bar-live.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/systemctl restart t1-custom-bar-live.service
-TimeoutStartSec=30
+ExecStart=/usr/local/lib/omarchy-t1-touchbar/t1-custom-bar-recover 3
+TimeoutStartSec=45
 
 [Install]
 WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target

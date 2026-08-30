@@ -177,8 +177,12 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
   restarts. The installer forces `s2idle` for lid-close sleep because Apple
   firmware does not restore the T1 display pipeline after deep S3; entering
   deep S3 leaves the OLED black until a reboot. A post-resume unit restarts the
-  renderer after supported sleep and hibernate. The persistent service remains
-  opt-in and includes a one-command firmware-strip rollback. See
+  renderer after supported sleep and hibernate, while a physical-lid watcher
+  performs a serialized five-second firmware-mode recovery after reopening.
+  The installer also protects the MacBookPro13,2 Alpine Ridge PCI trees from
+  the long resume timeout and forces its BCM43602 driver during early boot.
+  The persistent service remains opt-in and includes a one-command
+  firmware-strip rollback. See
   [docs/CUSTOM-BAR.md](docs/CUSTOM-BAR.md), [the layout and previews](custom-bar/README.md),
   and the [custom action helper](custom-bar/touchbar-action.sh).
 

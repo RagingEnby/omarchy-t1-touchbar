@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Give EmbeddedOS enough time in firmware mode to repower the OLED after wake,
+# then return to the programmable display stack.  Serialize overlapping
+# systemd-resume and physical-lid notifications.
+set -euo pipefail
+
+delay=${1:-3}
+exec 9>/run/lock/t1-custom-bar-recover.lock
+flock -n 9 || exit 0
+
+sleep "$delay"
+systemctl stop t1-custom-bar-live.service
+sleep 5
+systemctl start t1-custom-bar-live.service

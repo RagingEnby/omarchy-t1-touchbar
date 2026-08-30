@@ -104,12 +104,28 @@ firmware strip to programmable USB configuration 2 on every boot and restores
 configuration 1 whenever it is stopped. The installer also enables
 `t1-custom-bar-resume.service` and installs a systemd sleep policy selecting
 `s2idle`. After a supported suspend, hibernate, or lid-close sleep, the resume
-unit waits for the kernel wake to finish and restarts the renderer.
+unit waits for the kernel wake to finish and restarts the renderer. A separate
+`t1-custom-bar-lid.service` watches the physical lid state and performs a final
+delayed recovery after every reopen. That covers lid cycles where no systemd
+sleep target was entered without racing the normal post-suspend recovery.
 
 Do not select `deep` S3 on this model. Apple firmware does not restore the T1
 display pipeline from that state, and neither a USB configuration bounce nor a
 driver reload can recover the OLED; it stays black until the host reboots.
 `s2idle` is selected both immediately and persistently by the installer.
+
+The MacBookPro13,2 also has two Alpine Ridge Thunderbolt domains that can spend
+more than a minute retrying inaccessible PCI devices after `s2idle`. The
+installer adds `pcie_port_pm=off`, keeps both NHI devices out of D3cold, and
+installs a guarded pre-sleep remove/post-wake rescan hook. The hook refuses PCI
+removal if either Thunderbolt tree contains a block device. Do not suspend with
+mounted Thunderbolt storage attached.
+
+The in-tree BCM43602 driver is explicitly listed in `modules-load.d` because
+PCI coldplug was missed on two observed boots. Wi-Fi is never reloaded from the
+sleep hook: this firmware can lose usable radio state after a live reload.
+These resume protections follow the independently tested
+[MacBookPro13,2 hardware runbook](https://gist.github.com/bgausden/c7f8a3737c1e52a260dfcdb1fb2e90b2).
 
 To remove persistent mode and return to the firmware strip:
 
@@ -124,7 +140,9 @@ same script then restored a healthy two-interface firmware configuration-1
 topology and successfully reactivated custom mode, without a host reboot.
 The home/media/GPT layer swaps, direct workspace dispatch, kernel-timeout
 checks, reboot persistence, and deep-S3 failure mode have been exercised on the
-originating machine. Lid-close recovery must use the installed `s2idle` policy.
+originating machine. The serialized five-second firmware-mode bounce was also
+visibly confirmed to relight the physical OLED before the next protected sleep
+test. Lid-close recovery must use the installed `s2idle` policy.
 
 ## Stable firmware mode versus custom display mode
 

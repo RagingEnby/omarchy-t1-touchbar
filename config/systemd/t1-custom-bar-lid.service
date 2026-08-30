@@ -1,0 +1,16 @@
+[Unit]
+Description=Recover the programmable Apple T1 Touch Bar after lid reopen
+Documentation=https://github.com/cocoHMC/omarchy-t1-touchbar
+After=t1-custom-bar-live.service
+Wants=t1-custom-bar-live.service
+ConditionPathExists=/proc/acpi/button/lid/LID0/state
+
+[Service]
+Type=simple
+ExecStart=/usr/local/lib/omarchy-t1-touchbar/t1-lid-watcher
+Restart=on-failure
+RestartPreventExitStatus=78
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

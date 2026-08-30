@@ -1,0 +1,2 @@
+# Keep the two Alpine Ridge NHI devices out of D3cold on MacBookPro13,2.
+ACTION=="add", SUBSYSTEM=="pci", DRIVER=="thunderbolt", ATTR{d3cold_allowed}="0"

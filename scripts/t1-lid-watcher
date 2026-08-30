@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Restart the programmable strip after every physical lid reopen.  This also
+# covers stay-awake sessions, where no systemd suspend/resume target is reached.
+set -euo pipefail
+
+lid_state=/proc/acpi/button/lid/LID0/state
+
+[[ -r $lid_state ]] || {
+  printf 'T1 lid watcher: %s is unavailable\n' "$lid_state" >&2
+  exit 78
+}
+
+read_lid() {
+  awk '{ print $2 }' "$lid_state"
+}
+
+previous=$(read_lid)
+printf 'T1 lid watcher: initial state=%s\n' "$previous"
+
+while sleep 0.25; do
+  current=$(read_lid)
+  if [[ $previous == closed && $current == open ]]; then
+    printf 'T1 lid watcher: reopened; scheduling firmware-mode recovery\n'
+    # Let the normal post-suspend unit win first.  This delayed fallback is for
+    # lid cycles where no systemd sleep target was entered.
+    sleep 10
+    /usr/local/lib/omarchy-t1-touchbar/t1-custom-bar-recover 0
+  fi
+  previous=$current
+done
