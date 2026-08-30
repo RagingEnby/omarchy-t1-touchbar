@@ -5,6 +5,7 @@ set -euo pipefail
 unit=t1-custom-bar-live.service
 resume_unit=t1-custom-bar-resume.service
 install_root=/usr/local/lib/omarchy-t1-touchbar
+sleep_policy=/etc/systemd/sleep.conf.d/80-t1-touchbar-sleep.conf
 
 if [[ $(id -u) -ne 0 ]]; then
   printf 'Run with sudo: sudo %s\n' "$0" >&2
@@ -16,6 +17,7 @@ systemctl disable --now "$unit" >/dev/null 2>&1 || true
 rm -f -- \
   "/etc/systemd/system/$unit" \
   "/etc/systemd/system/$resume_unit" \
+  "$sleep_policy" \
   /etc/udev/rules.d/99-touchbar-dfr.rules \
   "$install_root/dfr-render" \
   "$install_root/dfr-touchd" \
@@ -32,3 +34,4 @@ udevadm control --reload
 modprobe -a apple_ibridge apple_touchbar >/dev/null 2>&1 || true
 
 printf 'Persistent custom mode removed; firmware Touch Bar restored.\n'
+printf 'The live sleep mode is unchanged until reboot; configure it explicitly if needed.\n'

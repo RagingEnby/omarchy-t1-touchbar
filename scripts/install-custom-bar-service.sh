@@ -10,6 +10,7 @@ kmod_root="$source_root/touch-bar/kernel/t1-touchbar-display"
 install_root=/usr/local/lib/omarchy-t1-touchbar
 unit=t1-custom-bar-live.service
 resume_unit=t1-custom-bar-resume.service
+sleep_policy=80-t1-touchbar-sleep.conf
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -19,6 +20,8 @@ fail() {
 [[ $(id -u) -eq 0 ]] || fail "run with sudo: sudo $0"
 [[ $(</sys/class/dmi/id/product_name) == MacBookPro13,2 ]] ||
   fail 'persistent custom mode is guarded for MacBookPro13,2'
+grep -qw s2idle /sys/power/mem_sleep ||
+  fail 'this kernel does not expose s2idle in /sys/power/mem_sleep'
 
 for required in \
   "$dfrd_root/dfr-render" "$dfrd_root/dfr-touchd" "$dfrd_root/dfr-fnd" \
@@ -52,6 +55,10 @@ install -m0644 \
   "$repo_root/config/systemd/$unit" \
   "$repo_root/config/systemd/$resume_unit" \
   /etc/systemd/system/
+install -d -m0755 /etc/systemd/sleep.conf.d
+install -m0644 "$repo_root/config/systemd/$sleep_policy" \
+  "/etc/systemd/sleep.conf.d/$sleep_policy"
+printf s2idle > /sys/power/mem_sleep
 
 systemctl disable --now t1-touchbar-boot.service >/dev/null 2>&1 || true
 systemctl daemon-reload
@@ -61,5 +68,6 @@ systemctl enable "$resume_unit"
 
 printf 'Persistent custom Touch Bar installed and started.\n'
 printf 'Service: %s (enabled at every boot)\n' "$unit"
-printf 'Resume: %s (relights after suspend/hibernate)\n' "$resume_unit"
+printf 'Sleep: s2idle (deep S3 cannot restore the T1 display)\n'
+printf 'Resume: %s (restarts the renderer after wake)\n' "$resume_unit"
 printf 'Rollback: sudo %s/uninstall-custom-bar-service.sh\n' "$repo_root/scripts"

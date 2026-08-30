@@ -102,9 +102,14 @@ and enables `t1-custom-bar-live.service` at `multi-user.target`. It does not
 depend on the Git checkout after installation. The service switches from the
 firmware strip to programmable USB configuration 2 on every boot and restores
 configuration 1 whenever it is stopped. The installer also enables
-`t1-custom-bar-resume.service`; after suspend, hibernate, or lid-close sleep it
-waits for the kernel wake to finish and performs the same tested transition to
-relight the T1 panel.
+`t1-custom-bar-resume.service` and installs a systemd sleep policy selecting
+`s2idle`. After a supported suspend, hibernate, or lid-close sleep, the resume
+unit waits for the kernel wake to finish and restarts the renderer.
+
+Do not select `deep` S3 on this model. Apple firmware does not restore the T1
+display pipeline from that state, and neither a USB configuration bounce nor a
+driver reload can recover the OLED; it stays black until the host reboots.
+`s2idle` is selected both immediately and persistently by the installer.
 
 To remove persistent mode and return to the firmware strip:
 
@@ -117,10 +122,9 @@ On the originating MacBookPro13,2, the live test reached stable configuration
 touch digitizer, created its uinput keyboard, and started the Fn watcher. The
 same script then restored a healthy two-interface firmware configuration-1
 topology and successfully reactivated custom mode, without a host reboot.
-The home/media/GPT layer swaps, direct workspace dispatch and kernel-timeout
-checks have been exercised on the originating machine. Longer suspend, reboot,
-shutdown and person-at-keyboard testing are still required before persistence
-is considered.
+The home/media/GPT layer swaps, direct workspace dispatch, kernel-timeout
+checks, reboot persistence, and deep-S3 failure mode have been exercised on the
+originating machine. Lid-close recovery must use the installed `s2idle` policy.
 
 ## Stable firmware mode versus custom display mode
 

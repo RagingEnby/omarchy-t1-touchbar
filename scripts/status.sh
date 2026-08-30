@@ -7,6 +7,13 @@ model=unknown
 [[ -r /sys/class/dmi/id/product_name ]] && model=$(</sys/class/dmi/id/product_name)
 printf 'Model: %s\n' "$model"
 printf 'Kernel: %s\n' "$(uname -r)"
+if [[ -r /sys/power/mem_sleep ]]; then
+  mem_sleep=$(</sys/power/mem_sleep)
+  printf 'Sleep mode: %s\n' "$mem_sleep"
+  if [[ $mem_sleep == *'[deep]'* ]]; then
+    printf 'Sleep warning: deep S3 leaves the T1 display black until reboot; select s2idle\n'
+  fi
+fi
 if command -v omarchy >/dev/null 2>&1; then
   printf 'Omarchy: %s\n' "$(omarchy version 2>/dev/null || printf unknown)"
 fi
