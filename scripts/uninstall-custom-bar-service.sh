@@ -24,6 +24,8 @@ rm -f -- \
   /etc/modules-load.d/brcmfmac.conf \
   /etc/udev/rules.d/86-mbp132-thunderbolt-d3cold.rules \
   /usr/lib/systemd/system-sleep/mbp132-thunderbolt-sleep \
+  /usr/lib/systemd/system-sleep/t1-custom-bar-sleep \
+  /run/t1-custom-bar-sleep-stopped \
   /etc/limine-entry-tool.d/20-macbookpro13-t1-suspend.conf \
   /etc/udev/rules.d/99-touchbar-dfr.rules \
   "$install_root/dfr-render" \

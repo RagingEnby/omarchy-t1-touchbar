@@ -87,9 +87,15 @@ if [[ $ibridge_config == 2 ]]; then
   printf 'Custom display: cfgsel=%s DRM=%s service=%s input=%s\n' \
     "$custom_cfgsel" "$custom_drm" "$custom_service" "$custom_input"
   if systemctl is-active --quiet t1-custom-bar-lid.service 2>/dev/null; then
-    printf 'Lid recovery: active\n'
+    printf 'Lid protection: active\n'
   else
-    printf 'Lid recovery: inactive\n'
+    printf 'Lid protection: inactive\n'
+  fi
+  if [[ -x /usr/lib/systemd/system-sleep/t1-custom-bar-sleep ]] &&
+     rg -q '\.resume = appletb_reset_resume' /usr/src/apple-ib-drv-0.1/apple-touchbar.c 2>/dev/null; then
+    printf 's2idle handoff: patched firmware resume + pre-sleep parking\n'
+  else
+    printf 's2idle handoff: incomplete\n'
   fi
 fi
 

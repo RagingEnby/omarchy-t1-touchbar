@@ -58,5 +58,11 @@ case $1 in
     for device in 0000:05:00.0 0000:06:00.0 0000:7b:00.0 0000:7c:00.0; do
       [[ -e /sys/bus/pci/devices/$device ]] || log_error "Thunderbolt descendant $device did not return"
     done
+    for device in 0000:05:00.0 0000:7b:00.0; do
+      if [[ -w /sys/bus/pci/devices/$device/d3cold_allowed ]]; then
+        printf 0 > "/sys/bus/pci/devices/$device/d3cold_allowed" ||
+          log_error "could not disable D3cold again for $device"
+      fi
+    done
     ;;
 esac

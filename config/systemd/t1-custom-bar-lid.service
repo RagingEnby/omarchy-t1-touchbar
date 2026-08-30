@@ -1,5 +1,5 @@
 [Unit]
-Description=Recover the programmable Apple T1 Touch Bar after lid reopen
+Description=Protect the programmable Apple T1 Touch Bar across lid cycles
 Documentation=https://github.com/cocoHMC/omarchy-t1-touchbar
 After=t1-custom-bar-live.service
 Wants=t1-custom-bar-live.service

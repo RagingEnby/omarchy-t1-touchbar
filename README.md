@@ -56,11 +56,11 @@ The complete live path was verified on:
 
 The live bar works, including the firmware Esc key and the Fn/function-key
 layout. The shipped configuration defaults to visible F1-F12 (`fnmode=2`),
-with Fn temporarily revealing the special brightness/media controls. The
-originating machine has deliberately not yet been rebooted for the
-final cold-boot persistence test. The EFI setup is correct and persistence is
-expected, but that one remaining result should be reported honestly rather
-than presented as already observed.
+with Fn temporarily revealing the special brightness/media controls. T1
+firmware persistence and the programmable service have survived repeated
+normal reboots on the originating machine. Lid-resume protection remains an
+explicit hardware test after changes to the pre-sleep handoff; do not report a
+new sleep sequence as proven until the physical OLED has passed that test.
 
 ## Choose the right path
 
@@ -89,7 +89,8 @@ Review the scripts, then:
 The driver installer:
 
 - pins the tested kernel-7-compatible T1 driver source;
-- installs it with DKMS;
+- installs it with DKMS and enables its existing restore routine for normal
+  `s2idle` resume;
 - writes `skip_acpi_power=1` before the module can load;
 - forces iBridge USB configuration 1 and disables autosuspend;
 - removes only the `05ac:8600` alternative from a local usbmuxd udev override;
@@ -176,9 +177,11 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
   originating MacBookPro13,2, including repeated firmware-to-custom service
   restarts. The installer forces `s2idle` for lid-close sleep because Apple
   firmware does not restore the T1 display pipeline after deep S3; entering
-  deep S3 leaves the OLED black until a reboot. A post-resume unit restarts the
-  renderer after supported sleep and hibernate, while a physical-lid watcher
-  performs a serialized five-second firmware-mode recovery after reopening.
+  deep S3 leaves the OLED black until a reboot. Before `s2idle`, the service
+  parks the T1 in Apple firmware configuration 1 so the patched stock driver
+  can suspend and relight the OLED; after wake, one serialized action returns
+  it to the programmable layout. A physical-lid watcher provides the same
+  protection when no systemd sleep transaction occurs.
   The installer also protects the MacBookPro13,2 Alpine Ridge PCI trees from
   the long resume timeout and forces its BCM43602 driver during early boot.
   The persistent service remains opt-in and includes a one-command

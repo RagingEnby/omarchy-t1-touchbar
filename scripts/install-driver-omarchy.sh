@@ -11,6 +11,7 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/.." && pwd)
 driver_checkout="$repo_root/.t1-work/sources/t1-touchbar"
 driver_source="$driver_checkout/apple-ib-drv"
+driver_patch="$repo_root/patches/apple-touchbar-s2idle-resume.patch"
 
 say() {
   printf 'T1 driver: %s\n' "$*"
@@ -48,6 +49,7 @@ fi
 [[ -d $driver_source ]] || fail 'pinned driver checkout is missing'
 [[ $(git -C "$driver_checkout" rev-parse HEAD) == "$driver_commit" ]] ||
   fail 'driver checkout is not at the pinned commit'
+[[ -r $driver_patch ]] || fail 'the s2idle resume patch is missing'
 [[ -e /usr/lib/modules/$(uname -r)/build/Makefile ]] ||
   fail 'headers for the running kernel are missing'
 
@@ -65,31 +67,72 @@ driver_files=(
   dkms.conf
 )
 
+# Keep the pinned checkout pristine.  DKMS receives a staged copy with the
+# T1 fixed-function driver's normal-resume callback enabled.  s2idle invokes
+# .resume rather than .reset_resume because the iBridge remains enumerated.
+driver_stage=$(mktemp -d /tmp/t1-driver-stage.XXXXXX)
+trap 'rm -rf -- "$driver_stage"' EXIT
+for file in "${driver_files[@]}"; do
+  install -m 0644 "$driver_source/$file" "$driver_stage/$file"
+done
+patch --silent -d "$driver_stage" -p1 < "$driver_patch"
+
+source_state=missing
+
 if [[ -d $dkms_source ]]; then
+  source_state=patched
   for file in "${driver_files[@]}"; do
     [[ -f $dkms_source/$file ]] || fail "existing DKMS source is incomplete: $dkms_source"
-    cmp -s "$driver_source/$file" "$dkms_source/$file" ||
-      fail "existing DKMS source differs at $file; refusing to overwrite it"
+    if ! cmp -s "$driver_stage/$file" "$dkms_source/$file"; then
+      source_state=other
+      break
+    fi
   done
-  say 'existing DKMS source matches the pinned driver'
-else
+
+  if [[ $source_state == other ]]; then
+    source_state=pristine
+    for file in "${driver_files[@]}"; do
+      if ! cmp -s "$driver_source/$file" "$dkms_source/$file"; then
+        source_state=other
+        break
+      fi
+    done
+  fi
+
+  [[ $source_state != other ]] ||
+    fail "existing DKMS source has unrecognized local changes: $dkms_source"
+fi
+
+if [[ $source_state != patched ]]; then
+  if dkms status "$dkms_name/$dkms_version" >/dev/null 2>&1; then
+    dkms remove -m "$dkms_name" -v "$dkms_version" --all
+  fi
   install -d -m 0755 "$dkms_source"
   for file in "${driver_files[@]}"; do
-    install -m 0644 "$driver_source/$file" "$dkms_source/$file"
+    install -m 0644 "$driver_stage/$file" "$dkms_source/$file"
   done
-  say "installed pinned source at $dkms_source"
+  say "installed pinned source plus the s2idle resume patch at $dkms_source"
+else
+  say 'existing DKMS source includes the pinned s2idle resume patch'
 fi
 
 dkms_state=$(dkms status "$dkms_name/$dkms_version" 2>/dev/null || true)
 running_kernel=$(uname -r)
+module_rebuilt=0
 if [[ $dkms_state != *"$running_kernel"*installed* ]]; then
   if ! dkms status "$dkms_name/$dkms_version" >/dev/null 2>&1; then
     dkms add -m "$dkms_name" -v "$dkms_version"
   fi
   dkms build -m "$dkms_name" -v "$dkms_version"
   dkms install -m "$dkms_name" -v "$dkms_version"
+  module_rebuilt=1
 else
-  say 'DKMS module is already installed'
+  say 'patched DKMS module is already installed'
+fi
+
+if (( module_rebuilt == 1 )) && command -v limine-mkinitcpio >/dev/null 2>&1; then
+  limine-mkinitcpio
+  say 'rebuilt the Omarchy unified kernel image'
 fi
 
 install -D -m 0644 "$repo_root/config/99-ibridge.rules" /etc/udev/rules.d/99-ibridge.rules
@@ -109,12 +152,22 @@ fi
 
 udevadm control --reload
 
-if lsusb -d 05ac:8600 >/dev/null 2>&1; then
+ibridge_config=
+for path in /sys/bus/usb/devices/*; do
+  [[ -r $path/idVendor && -r $path/idProduct && -r $path/bConfigurationValue ]] || continue
+  [[ $(<"$path/idVendor") == 05ac && $(<"$path/idProduct") == 8600 ]] || continue
+  ibridge_config=$(<"$path/bConfigurationValue")
+  break
+done
+
+if [[ $ibridge_config == 1 ]]; then
   modprobe apple_ibridge skip_acpi_power=1
   modprobe apple_touchbar
   udevadm trigger --subsystem-match=usb --action=add
   udevadm settle
   say 'loaded the firmware Touch Bar driver live'
+elif [[ $ibridge_config == 2 ]]; then
+  say 'programmable USB configuration 2 is active; firmware driver is staged for the next handoff'
 else
   say 'driver is staged; no production iBridge is currently present'
 fi

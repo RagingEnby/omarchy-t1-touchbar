@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Park the T1 in Apple firmware mode before sleep.  In configuration 1 the
+# patched apple_touchbar driver can turn the OLED off and back on around
+# s2idle; configuration 2 cannot reliably recover the physical panel latch.
+set -u
+
+[[ $(cat /sys/class/dmi/id/product_name 2>/dev/null) == MacBookPro13,2 ]] || exit 0
+
+unit=t1-custom-bar-live.service
+marker=/run/t1-custom-bar-sleep-stopped
+
+log_error() {
+  logger -t t1-custom-bar-sleep -p user.err -- "$*"
+}
+
+firmware_config_ready() {
+  local path
+  for path in /sys/bus/usb/devices/*; do
+    [[ -r $path/idVendor && -r $path/idProduct && -r $path/bConfigurationValue ]] || continue
+    [[ $(<"$path/idVendor") == 05ac && $(<"$path/idProduct") == 8600 ]] || continue
+    [[ $(<"$path/bConfigurationValue") == 1 ]]
+    return
+  done
+  return 1
+}
+
+case ${1:-} in
+  pre)
+    if systemctl is-active --quiet "$unit"; then
+      if systemctl stop "$unit"; then
+        touch "$marker"
+      else
+        log_error 'could not stop the programmable bar before sleep'
+        exit 1
+      fi
+    fi
+
+    for _ in {1..40}; do
+      firmware_config_ready && exit 0
+      sleep 0.25
+    done
+    log_error 'Apple firmware configuration 1 was not ready before sleep'
+    exit 1
+    ;;
+  post)
+    # t1-custom-bar-resume.service performs the delayed, serialized restart.
+    ;;
+esac
