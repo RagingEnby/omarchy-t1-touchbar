@@ -3,6 +3,7 @@
 set -euo pipefail
 
 unit=t1-custom-bar-live.service
+resume_unit=t1-custom-bar-resume.service
 install_root=/usr/local/lib/omarchy-t1-touchbar
 
 if [[ $(id -u) -ne 0 ]]; then
@@ -10,9 +11,11 @@ if [[ $(id -u) -ne 0 ]]; then
   exit 1
 fi
 
+systemctl disable "$resume_unit" >/dev/null 2>&1 || true
 systemctl disable --now "$unit" >/dev/null 2>&1 || true
 rm -f -- \
   "/etc/systemd/system/$unit" \
+  "/etc/systemd/system/$resume_unit" \
   /etc/udev/rules.d/99-touchbar-dfr.rules \
   "$install_root/dfr-render" \
   "$install_root/dfr-touchd" \

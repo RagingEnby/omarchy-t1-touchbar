@@ -131,6 +131,9 @@ and reboots with:
 sudo ./scripts/install-custom-bar-service.sh
 ```
 
+This enables both boot persistence and a post-resume relight unit for lid-close
+suspend and hibernation.
+
 Rollback to Apple's firmware-rendered strip with:
 
 ```bash

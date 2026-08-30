@@ -101,7 +101,10 @@ The installer copies the reviewed binaries and kernel modules to
 and enables `t1-custom-bar-live.service` at `multi-user.target`. It does not
 depend on the Git checkout after installation. The service switches from the
 firmware strip to programmable USB configuration 2 on every boot and restores
-configuration 1 whenever it is stopped.
+configuration 1 whenever it is stopped. The installer also enables
+`t1-custom-bar-resume.service`; after suspend, hibernate, or lid-close sleep it
+waits for the kernel wake to finish and performs the same tested transition to
+relight the T1 panel.
 
 To remove persistent mode and return to the firmware strip:
 

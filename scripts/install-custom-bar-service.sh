@@ -9,6 +9,7 @@ dfrd_root="$source_root/touch-bar/dfrd"
 kmod_root="$source_root/touch-bar/kernel/t1-touchbar-display"
 install_root=/usr/local/lib/omarchy-t1-touchbar
 unit=t1-custom-bar-live.service
+resume_unit=t1-custom-bar-resume.service
 
 fail() {
   printf 'ERROR: %s\n' "$*" >&2
@@ -47,13 +48,18 @@ install -m0644 \
 printf '%s\n' "$(uname -r)" > "$install_root/kernel-release"
 install -m0644 "$dfrd_root/99-touchbar-dfr.rules" \
   /etc/udev/rules.d/99-touchbar-dfr.rules
-install -m0644 "$repo_root/config/systemd/$unit" "/etc/systemd/system/$unit"
+install -m0644 \
+  "$repo_root/config/systemd/$unit" \
+  "$repo_root/config/systemd/$resume_unit" \
+  /etc/systemd/system/
 
 systemctl disable --now t1-touchbar-boot.service >/dev/null 2>&1 || true
 systemctl daemon-reload
 udevadm control --reload
 systemctl enable --now "$unit"
+systemctl enable "$resume_unit"
 
 printf 'Persistent custom Touch Bar installed and started.\n'
 printf 'Service: %s (enabled at every boot)\n' "$unit"
+printf 'Resume: %s (relights after suspend/hibernate)\n' "$resume_unit"
 printf 'Rollback: sudo %s/uninstall-custom-bar-service.sh\n' "$repo_root/scripts"

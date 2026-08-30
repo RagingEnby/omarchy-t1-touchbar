@@ -1,0 +1,15 @@
+[Unit]
+Description=Relight the programmable Apple T1 Touch Bar after sleep
+Documentation=https://github.com/cocoHMC/omarchy-t1-touchbar
+DefaultDependencies=no
+After=systemd-suspend.service systemd-hibernate.service systemd-hybrid-sleep.service systemd-suspend-then-hibernate.service
+Before=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
+ConditionPathExists=/etc/systemd/system/t1-custom-bar-live.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/systemctl restart t1-custom-bar-live.service
+TimeoutStartSec=30
+
+[Install]
+WantedBy=suspend.target hibernate.target hybrid-sleep.target suspend-then-hibernate.target
