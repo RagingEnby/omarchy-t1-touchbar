@@ -31,6 +31,7 @@ rm -f -- \
   "$install_root/dfr-render" \
   "$install_root/dfr-touchd" \
   "$install_root/dfr-fnd" \
+  "$install_root/dfr-contextd" \
   "$install_root/dfrd-run.sh" \
   "$install_root/touchbar-action" \
   "$install_root/custom-bar-service-runner" \

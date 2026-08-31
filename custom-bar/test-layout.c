@@ -12,13 +12,22 @@ static int fail(const char *layout, int key, const char *why)
 
 int main(void)
 {
-	const char *expected[] = { "fn", "media", "ctrl", "alt", "meta" };
+	const char *expected[] = {
+		"fn", "media", "ctrl", "alt", "meta", "browser", "terminal",
+		"code", "nvim", "files", "comms", "document", "reader", "music",
+		"universal",
+	};
+	const unsigned allowed_mods = DFR_MOD_CTRL | DFR_MOD_ALT |
+		DFR_MOD_SHIFT | DFR_MOD_META;
+	int hotkey_count = 0;
 
-	if (DFR_NLAYOUTS != 5)
+	if (DFR_NLAYOUTS != 15)
 		return fail("all", DFR_NLAYOUTS, "unexpected layout count");
 
 	for (int l = 0; l < DFR_NLAYOUTS; l++) {
 		const struct dfr_layout *layout = &dfr_layouts[l];
+		int has_escape = 0;
+
 		if (strcmp(layout->name, expected[l]) != 0)
 			return fail(layout->name, l, "unexpected name/order");
 		if (layout->nkeys < 1 || dfr_total_weight(layout) <= 0.0f)
@@ -32,8 +41,20 @@ int main(void)
 
 			if (!key->label || !*key->label || key->weight <= 0.0f)
 				return fail(layout->name, k, "bad label or weight");
+			if (key->action < DFR_ACT_KEY || key->action > DFR_ACT_HOTKEY)
+				return fail(layout->name, k, "unknown action type");
 			if (key->action == DFR_ACT_KEY && key->keycode <= 0)
 				return fail(layout->name, k, "key action has no keycode");
+			if (key->action == DFR_ACT_HOTKEY) {
+				hotkey_count++;
+				if (key->keycode <= 0)
+					return fail(layout->name, k,
+						    "hotkey action has no keycode");
+				if (key->mods == DFR_MOD_NONE ||
+				    (key->mods & ~allowed_mods) != 0)
+					return fail(layout->name, k,
+						    "hotkey has invalid modifiers");
+			}
 			if (key->action == DFR_ACT_CMD && (!key->cmd || !*key->cmd))
 				return fail(layout->name, k, "command action has no command");
 			if (key->action == DFR_ACT_LAYER &&
@@ -48,16 +69,20 @@ int main(void)
 				return fail(layout->name, k, "invalid pixel extent");
 			if (dfr_zone_from_nx(layout, midpoint) != k)
 				return fail(layout->name, k, "touch midpoint maps to wrong key");
+			if (key->action == DFR_ACT_KEY && key->keycode == KEY_ESC)
+				has_escape = 1;
 		}
+
+		if (!has_escape)
+			return fail(layout->name, -1,
+				    "layout has no Escape key");
 	}
+	if (hotkey_count == 0)
+		return fail("all", -1, "no native hotkey actions were tested");
 
 	if (strcmp(dfr_keys_media[14].cmd,
 		   "/run/t1-custom-bar/touchbar-action dictation-toggle") != 0)
 		return fail("media", 14, "home microphone action is missing");
-	if (strcmp(dfr_keys_meta[2].label, "VOICE") != 0 ||
-	    dfr_keys_meta[2].action != DFR_ACT_CMD)
-		return fail("meta", 2, "voice toggle is not a command action");
-
 	puts("custom layout geometry/actions: PASS");
 	return 0;
 }

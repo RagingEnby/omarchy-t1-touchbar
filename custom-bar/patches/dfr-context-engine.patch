@@ -1,0 +1,1152 @@
+diff --git a/touch-bar/dfrd/dfr-fnd.c b/touch-bar/dfrd/dfr-fnd.c
+index 8e94142..e302cfd 100644
+--- a/touch-bar/dfrd/dfr-fnd.c
++++ b/touch-bar/dfrd/dfr-fnd.c
+@@ -2,18 +2,19 @@
+ /*
+  * dfr-fnd — debounced Fn-layer toggle for the T1 Touch Bar.
+  *
+- * Watches the Apple SPI Keyboard and switches the rendered Touch Bar layout to
+- * use the `media` control strip by default, and toggles a layer when Fn is
+- * pressed. Release events never redraw the display:
++ * Watches the Apple SPI Keyboard. A plain Fn tap alternates the F-row with the
++ * last renderer-committed app deck; modifier+Fn selects a fixed utility deck.
++ * Release events never redraw the display:
+  *
+- *     Fn            -> toggle "fn" / "media"
++ *     Fn            -> toggle "fn" / last committed app deck
+  *     Ctrl + Fn     -> "ctrl"
+  *     Alt/Opt + Fn  -> "alt"
+  *     Cmd/Meta + Fn -> "meta"
+  *
+  * Any target layer that doesn't exist in dfr-layout.h falls back to "fn".
+- * It sets the layout DETERMINISTICALLY by sending SIGRTMIN+<layout index> to
+- * dfr-render and dfr-touchd (a missed event self-heals on the next press).
++ * It requests a layout by sending SIGRTMIN+<layout index> to dfr-render and a
++ * wake signal to dfr-touchd. Touch adopts only dfr-render's committed state
++ * after the pending-layout fence clears, so an early wake is harmless.
+  *
+  * Run as root (reads /dev/input/event*).
+  *   sudo ./dfr-fnd -v                          # TEST: print key events, send no signals
+@@ -36,6 +37,8 @@
+ /* Ignore only implausibly close duplicate down edges. The renderer separately
+  * coalesces full-frame pushes, so legitimate fast taps are never discarded. */
+ #define FN_TOGGLE_COOLDOWN_MS 90
++#define DFR_COMMITTED_PATH "/run/t1-custom-bar/layout.committed"
++#define LAYOUT_SETTLE_GUARD_MS 250
+ 
+ static int64_t now_ms(void)
+ {
+@@ -77,6 +80,17 @@ static int layer_idx(const char *name)
+ 	return i < 0 ? 0 : i;
+ }
+ 
++static int committed_layout(void)
++{
++	FILE *file = fopen(DFR_COMMITTED_PATH, "r");
++	if (!file)
++		return -1;
++	int idx = -1;
++	int valid = fscanf(file, "%d", &idx) == 1;
++	fclose(file);
++	return valid && idx >= 0 && idx < DFR_NLAYOUTS ? idx : -1;
++}
++
+ static void signal_layer(pid_t *pids, int npids, int idx, int verbose)
+ {
+ 	for (int i = 0; i < npids; i++)
+@@ -107,15 +121,18 @@ int main(int argc, char **argv)
+ 	}
+ 	int idx_media = dfr_layout_index("media");
+ 	if (idx_media < 0) idx_media = 0;
++	int idx_fn = layer_idx("fn");
+ 
+ 	printf("keyboard: %s\n", desc);
+ 	if (verbose)
+ 		printf("TEST MODE: printing key events. Press Fn and modifier+Fn combos. Ctrl-C to stop.\n");
+ 	else
+-		printf("driving %d pid(s): tap Fn toggles fn/media; modifier+Fn selects an extra layer\n", npids);
++		printf("driving %d pid(s): tap Fn toggles F-keys/current deck; modifier+Fn selects an extra layer\n", npids);
+ 
+ 	int ctrl = 0, alt = 0, meta = 0;
+-	int fn_visible = 0;
++	int return_idx = idx_media;
++	int fn_selected = 0;
++	int64_t last_request = -LAYOUT_SETTLE_GUARD_MS;
+ 	int64_t last_toggle = -FN_TOGGLE_COOLDOWN_MS;
+ 	struct input_event ev;
+ 	while (read(fd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
+@@ -149,10 +166,26 @@ int main(int argc, char **argv)
+ 				if (ctrl || alt || meta) {
+ 					const char *name = ctrl ? "ctrl" : alt ? "alt" : "meta";
+ 					idx = layer_idx(name);
+-					fn_visible = 0;
++					fn_selected = 0;
+ 				} else {
+-					fn_visible = !fn_visible;
+-					idx = fn_visible ? layer_idx("fn") : idx_media;
++					int committed = committed_layout();
++					if (committed == idx_fn)
++						fn_selected = 1;
++					else if (committed >= 0 &&
++						 t - last_request >= LAYOUT_SETTLE_GUARD_MS) {
++						fn_selected = 0;
++						return_idx = committed;
++					}
++					if (fn_selected) {
++						idx = return_idx;
++						fn_selected = 0;
++					} else {
++						if (committed >= 0)
++							return_idx = committed;
++						idx = idx_fn;
++						fn_selected = 1;
++					}
++					last_request = t;
+ 				}
+ 				signal_layer(pids, npids, idx, verbose);
+ 			}
+diff --git a/touch-bar/dfrd/dfr-render.c b/touch-bar/dfrd/dfr-render.c
+index 635c676..6201c37 100644
+--- a/touch-bar/dfrd/dfr-render.c
++++ b/touch-bar/dfrd/dfr-render.c
+@@ -11,9 +11,10 @@
+  *      2170 x 60 landscape, rotated 90°)
+  *   4. allocates a dumb buffer (XRGB8888 — appletbdrm converts to the
+  *      panel's RGB888 internally) and draws the active layout
+- *   5. stays alive holding the mode; SIGUSR1 cycles to the next layout
+- *      (dfr-touchd cycles on SIGUSR1 too, so signal both to stay in sync);
+- *      SIGRTMIN+i sets layout i deterministically (driven by dfr-fnd)
++ *   5. stays alive holding the mode; SIGUSR1 requests the renderer's next
++ *      layout and SIGRTMIN+i requests layout i (driven by dfr-fnd). dfr-touchd
++ *      follows only the layout published after the frame's USB transaction
++ *      completes and the renderer removes its pending-layout fence.
+  *
+  * STEP 2 (this revision):
+  *   - text is rendered with FreeType from JetBrainsMono Nerd Font
+@@ -50,6 +51,7 @@
+ #include <sys/mman.h>
+ #include <sys/socket.h>
+ #include <sys/stat.h>
++#include <sys/sysmacros.h>
+ #include <sys/time.h>
+ #include <sys/un.h>
+ 
+@@ -66,18 +68,20 @@
+ #define DRIVER_NAME "appletbdrm"
+ #define FRAME_SETTLE_MS 35
+ #define FRAME_INTERVAL_MS 120
++#define FRAME_RESPONSE_WAIT_MS 250
++#define DFR_COMMITTED_PATH "/run/t1-custom-bar/layout.committed"
++#define DFR_PENDING_PATH "/run/t1-custom-bar/layout.pending"
++#define DFR_FRAME_SEQUENCE_ATTR "successful_frame_sequence"
+ 
+ /* colors (XRGB8888) */
+-#define COL_BG  0xFF0A0A0Au
+-#define COL_BTN 0xFF2E2E2Eu
+-#define COL_TXT 0xFFE8E8E8u
+-#define COL_ESC 0xFF3A2E2Eu   /* slightly warm tint so ESC is findable by feel */
+-#define COL_BORDER 0xFF606060u /* grey outline so buttons stand out on the dark bar */
+-#define COL_WS_EMPTY 0xFF64748Bu
+-#define COL_WS_OCC_BG 0xFF075985u
+-#define COL_WS_OCC_BORDER 0xFF7DD3FCu
+-#define COL_WS_OCC_TEXT 0xFFF8FAFCu
+-#define BORDER_PX 2            /* outline thickness (px) */
++#define COL_BG        0xFF0E0E14u /* Tokyo Night darker */
++#define COL_SURFACE   0xFF24283Bu
++#define COL_SELECTION 0xFF292E42u
++#define COL_FG        0xFFC0CAF5u
++#define COL_MUTED     0xFF414868u
++#define COL_ACCENT    0xFF7AA2F7u
++#define COL_CYAN      0xFF0DB9D7u
++#define COL_SOFT_FG   0xFFA9B1D6u
+ 
+ /* type sizes for the 60px bar (buttons are bar-12 = 48px tall) */
+ #define FONT_PX_MAX 30
+@@ -92,6 +96,27 @@ static void on_usr1(int s)  { (void)s; g_cycle = 1; }
+ static void on_rt(int s)    { g_setlayout = s - SIGRTMIN; }  /* SIGRTMIN+i -> set layout i */
+ static int64_t now_ms(void);
+ 
++/* Signal handlers only store sig_atomic_t values. Block every layout signal
++ * while the main loop snapshots and clears them so a handler cannot land in
++ * the read/clear gap and have its newer request erased. A signal delivered
++ * while blocked runs after restoration and remains pending for the next loop. */
++static int take_layout_request(const sigset_t *layout_signals,
++			       int current_layout, int *requested_layout)
++{
++	sigset_t previous;
++	if (sigprocmask(SIG_BLOCK, layout_signals, &previous) < 0)
++		return -1;
++	sig_atomic_t cycle = g_cycle;
++	sig_atomic_t requested = g_setlayout;
++	g_cycle = 0;
++	g_setlayout = -1;
++	if (sigprocmask(SIG_SETMASK, &previous, NULL) < 0)
++		return -1;
++	*requested_layout = cycle ? (current_layout + 1) % DFR_NLAYOUTS :
++		(int)requested;
++	return 0;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* Framebuffer + physical-coordinate drawing                            */
+ /* ------------------------------------------------------------------ */
+@@ -142,17 +167,33 @@ static void fill_phys(int px, int py, int w, int h, uint32_t c)
+ 			put_phys(x, y, c);
+ }
+ 
+-/* draw a `t`px-thick outline just inside the (px,py,w,h) rect */
+-static void stroke_phys(int px, int py, int w, int h, int t, uint32_t c)
++/* Rounded fill without libm: the panel is only 60 px high, so a tiny integer
++ * corner test is both simple and fast enough for the throttled full frames. */
++static void fill_round_phys(int px, int py, int w, int h, int radius,
++			    uint32_t c)
+ {
+-	if (t <= 0 || w <= 0 || h <= 0)
++	if (w <= 0 || h <= 0)
+ 		return;
+-	if (t > w / 2) t = w / 2;
+-	if (t > h / 2) t = h / 2;
+-	fill_phys(px, py, w, t, c);                 /* top    */
+-	fill_phys(px, py + h - t, w, t, c);         /* bottom */
+-	fill_phys(px, py, t, h, c);                 /* left   */
+-	fill_phys(px + w - t, py, t, h, c);         /* right  */
++	if (radius < 0)
++		radius = 0;
++	if (radius > w / 2)
++		radius = w / 2;
++	if (radius > h / 2)
++		radius = h / 2;
++	for (int y = 0; y < h; y++) {
++		for (int x = 0; x < w; x++) {
++			if ((x >= radius && x < w - radius) ||
++			    (y >= radius && y < h - radius)) {
++				put_phys(px + x, py + y, c);
++				continue;
++			}
++			int cx = x < radius ? radius - 1 : w - radius;
++			int cy = y < radius ? radius - 1 : h - radius;
++			int dx = x - cx, dy = y - cy;
++			if (dx * dx + dy * dy <= radius * radius)
++				put_phys(px + x, py + y, c);
++		}
++	}
+ }
+ 
+ /* ------------------------------------------------------------------ */
+@@ -373,6 +414,7 @@ static int utf8_enc(uint32_t cp, char *buf)
+ static char g_ind_label[DFR_IND_COUNT][64];
+ static uint32_t g_ind_color[DFR_IND_COUNT]; /* dynamic tint per indicator */
+ static unsigned g_workspace_mask;
++static int g_active_workspace;
+ static int64_t g_next_status_refresh;
+ 
+ static int is_number(const char *s)
+@@ -511,8 +553,21 @@ static int workspace_refresh(void)
+ 		if (!next_id)
+ 			break;
+ 	}
+-	int changed = next != g_workspace_mask;
++	int next_active = g_active_workspace;
++	char active_response[1024];
++	if (hypr_request("j/activeworkspace", active_response,
++			 sizeof active_response) == 0) {
++		const char *id = strstr(active_response, "\"id\"");
++		const char *colon = id ? strchr(id, ':') : NULL;
++		if (colon) {
++			long value = strtol(colon + 1, NULL, 10);
++			next_active = value >= 1 && value <= 10 ? (int)value : 0;
++		}
++	}
++	int changed = next != g_workspace_mask ||
++		next_active != g_active_workspace;
+ 	g_workspace_mask = next;
++	g_active_workspace = next_active;
+ 	return changed;
+ }
+ 
+@@ -659,24 +714,40 @@ static void draw_layout(const struct dfr_layout *l)
+ 	for (int i = 0; i < l->nkeys; i++) {
+ 		int x0, x1;
+ 		dfr_key_extent(l, i, g_long, &x0, &x1);
+-		int bw = (x1 - x0) - 6;                  /* 3px gap each side */
++		int bx = x0 + 3, by = 7;
++		int bw = (x1 - x0) - 6;
++		int bh = g_short - 14;
+ 		const struct dfr_key *k = &l->keys[i];
+ 		int workspace = k->indicator >= DFR_IND_WORKSPACE_1 &&
+ 			k->indicator <= DFR_IND_WORKSPACE_10 ?
+ 			k->indicator - DFR_IND_WORKSPACE_1 + 1 : 0;
+ 		int occupied = workspace &&
+ 			(g_workspace_mask & (1u << (workspace - 1)));
+-		uint32_t bc = (k->action == DFR_ACT_KEY && k->keycode == KEY_ESC) ?
+-			COL_ESC : occupied ? COL_WS_OCC_BG : COL_BTN;
+-		uint32_t border = occupied ? COL_WS_OCC_BORDER : COL_BORDER;
+-		fill_phys(x0 + 3, 6, bw, g_short - 12, bc);
+-		stroke_phys(x0 + 3, 6, bw, g_short - 12,
+-			    occupied ? BORDER_PX + 1 : BORDER_PX, border);
++		int active = workspace && workspace == g_active_workspace;
++		int badge = k->action == DFR_ACT_LAYER && k->cmd &&
++			!strcmp(k->cmd, l->name);
++		uint32_t surface = active ? COL_ACCENT :
++			(occupied || badge) ? COL_SELECTION : COL_SURFACE;
++		uint32_t border = active ? COL_FG :
++			occupied ? COL_CYAN : badge && k->color ? k->color : COL_MUTED;
++
++		/* One-pixel rounded outline plus a quiet, theme-colored surface. */
++		fill_round_phys(bx, by, bw, bh, 9, border);
++		fill_round_phys(bx + 1, by + 1, bw - 2, bh - 2, 8, surface);
++
++		/* A restrained color rail carries action identity without turning the
++		 * entire row into rainbow blocks. Current workspace gets a dark rail. */
++		uint32_t rail = active ? COL_BG : k->color ? k->color : COL_ACCENT;
++		if (bw > 18)
++			fill_round_phys(bx + 9, by + bh - 4, bw - 18, 2, 1, rail);
++		if (occupied && !active)
++			fill_round_phys(bx + bw / 2 - 3, by + bh - 9, 6, 6, 3,
++					COL_CYAN);
+ 
+ 		const char *label = key_label(k);
+-		uint32_t tcol = COL_TXT;
++		uint32_t tcol = COL_FG;
+ 		if (workspace)
+-			tcol = occupied ? COL_WS_OCC_TEXT : COL_WS_EMPTY;
++			tcol = active ? COL_BG : occupied ? COL_FG : COL_SOFT_FG;
+ 		else if (k->indicator > DFR_IND_NONE &&
+ 		    k->indicator <= DFR_IND_KBDLIGHT && g_ind_color[k->indicator])
+ 			tcol = g_ind_color[k->indicator];
+@@ -781,6 +852,113 @@ static int64_t now_ms(void)
+ 	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+ }
+ 
++static int frame_sequence_path(int drm_fd, char *out, size_t n)
++{
++	struct stat st;
++	if (fstat(drm_fd, &st) < 0)
++		return -1;
++	int len = snprintf(out, n, "/sys/dev/char/%u:%u/device/%s",
++			   major(st.st_rdev), minor(st.st_rdev),
++			   DFR_FRAME_SEQUENCE_ATTR);
++	if (len < 0 || (size_t)len >= n) {
++		errno = ENAMETOOLONG;
++		return -1;
++	}
++	return access(out, R_OK);
++}
++
++static int read_frame_sequence(const char *path, uint64_t *sequence)
++{
++	FILE *f = fopen(path, "r");
++	if (!f)
++		return -1;
++	unsigned long long value;
++	errno = 0;
++	int ok = fscanf(f, "%llu", &value) == 1;
++	int saved = errno;
++	if (fclose(f) < 0 && ok) {
++		ok = 0;
++		saved = errno;
++	}
++	if (!ok) {
++		errno = saved ? saved : EIO;
++		return -1;
++	}
++	*sequence = (uint64_t)value;
++	return 0;
++}
++
++/* The DRM atomic callback cannot return a late USB failure to modeset callers.
++ * Wait for the driver's read-only counter, which advances only after a complete
++ * bulk OUT, at least one device response, and a bounded response-queue drain.
++ * This confirms transport completion, not panel pixel readback. */
++static int wait_frame_advance(const char *path, uint64_t before)
++{
++	int64_t deadline = now_ms() + FRAME_RESPONSE_WAIT_MS;
++	do {
++		uint64_t after;
++		if (read_frame_sequence(path, &after) < 0)
++			return -1;
++		if (after > before)
++			return 0;
++		usleep(5000);
++	} while (now_ms() < deadline);
++	errno = ETIMEDOUT;
++	return -1;
++}
++
++/* Atomically publish one layout index. The pending file is a fail-closed fence;
++ * the committed file is the hit map touchd may adopt. */
++static int publish_layout_file(const char *path, int layout_idx)
++{
++	char tmp[PATH_MAX], payload[32];
++	if (snprintf(tmp, sizeof tmp, "%s.tmp.%ld", path,
++		     (long)getpid()) >= (int)sizeof tmp)
++		return -1;
++	int len = snprintf(payload, sizeof payload, "%d\n", layout_idx);
++	if (len <= 0 || len >= (int)sizeof payload)
++		return -1;
++
++	int out = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
++	if (out < 0)
++		return -1;
++	int used = 0;
++	while (used < len) {
++		ssize_t n = write(out, payload + used, (size_t)(len - used));
++		if (n < 0 && errno == EINTR)
++			continue;
++		if (n <= 0) {
++			close(out);
++			unlink(tmp);
++			return -1;
++		}
++		used += (int)n;
++	}
++	int failed = fsync(out) < 0;
++	int saved = failed ? errno : 0;
++	if (close(out) < 0 && !failed) {
++		failed = 1;
++		saved = errno;
++	}
++	if (!failed && rename(tmp, path) < 0) {
++		failed = 1;
++		saved = errno;
++	}
++	if (failed) {
++		unlink(tmp);
++		errno = saved;
++		return -1;
++	}
++	return 0;
++}
++
++static int clear_pending_layout(void)
++{
++	if (unlink(DFR_PENDING_PATH) < 0 && errno != ENOENT)
++		return -1;
++	return 0;
++}
++
+ int main(int argc, char **argv)
+ {
+ 	const char *card_override = NULL, *preview_path = NULL;
+@@ -806,14 +984,14 @@ int main(int argc, char **argv)
+ 			g_flip_short = 1;
+ 		} else {
+ 			fprintf(stderr,
+-				"usage: %s [-l fn|media|ctrl|alt|meta] [-c /dev/dri/cardN]\n"
++				"usage: %s [-l layout] [-c /dev/dri/cardN]\n"
+ 				"          [--flip-long] [--flip-short] [--preview out.ppm]\n"
+ 				"  --flip-short : if labels render vertically mirrored\n"
+ 				"  --flip-long  : if the row is left/right reversed vs touch\n"
+ 				"  --preview    : no DRM — write what the bar would show as a PPM\n"
+ 				"  DFR_FONT     : env override for the Nerd Font path\n"
+-				"  SIGUSR1      : cycle to next layout (send to dfr-touchd too!)\n"
+-				"  SIGRTMIN+i   : set layout i (dfr-fnd drives this)\n",
++				"  SIGUSR1      : request renderer's next layout\n"
++				"  SIGRTMIN+i   : request layout i (dfr-fnd drives this)\n",
+ 				argv[0]);
+ 			return 2;
+ 		}
+@@ -830,12 +1008,28 @@ int main(int argc, char **argv)
+ 	signal(SIGUSR1, on_usr1);
+ 	for (int i = 0; i < DFR_NLAYOUTS && SIGRTMIN + i <= SIGRTMAX; i++)
+ 		signal(SIGRTMIN + i, on_rt);
++	sigset_t layout_signals;
++	sigemptyset(&layout_signals);
++	sigaddset(&layout_signals, SIGUSR1);
++	for (int i = 0; i < DFR_NLAYOUTS && SIGRTMIN + i <= SIGRTMAX; i++)
++		sigaddset(&layout_signals, SIGRTMIN + i);
+ 
+ 	char card_path[64] = "";
+ 	int fd = open_card(card_override, card_path, sizeof card_path);
+ 	if (fd < 0)
+ 		return 1;
+ 	printf("card: %s (%s)\n", card_path, DRIVER_NAME);
++	char frame_sequence_pathname[PATH_MAX];
++	if (frame_sequence_path(fd, frame_sequence_pathname,
++				sizeof frame_sequence_pathname) < 0) {
++		fprintf(stderr,
++			"successful-frame counter unavailable: %s\n"
++			"  install the matching patched appletbdrm module; refusing "
++			"a frame/hit-map pairing without transaction sequencing\n",
++			strerror(errno));
++		close(fd);
++		return 1;
++	}
+ 
+ 	/* Become master. If mutter still owns the card this fails — that means
+ 	 * the seat udev rule isn't in effect for this card yet. */
+@@ -955,9 +1149,24 @@ int main(int argc, char **argv)
+ 	const struct dfr_layout *layout = &dfr_layouts[layout_idx];
+ 	if (dfr_layout_has_indicators(layout))
+ 		ind_refresh();
++	/* The runner starts one renderer at a time. Replace a stale crash fence,
++	 * then arm this renderer's fence before its first physical submission. */
++	if (clear_pending_layout() < 0 ||
++	    publish_layout_file(DFR_PENDING_PATH, layout_idx) < 0) {
++		fprintf(stderr, "prepare initial pending-layout fence: %s\n",
++			strerror(errno));
++		return 1;
++	}
++	int pending_fence_armed = 1;
+ 	draw_layout(layout);
+ 
+ 	uint32_t conn_id = conn->connector_id;
++	uint64_t frame_before;
++	if (read_frame_sequence(frame_sequence_pathname, &frame_before) < 0) {
++		fprintf(stderr, "read successful-frame counter before modeset: %s\n",
++			strerror(errno));
++		return 1;
++	}
+ 	if (drmModeSetCrtc(fd, crtc_id, fb_id, 0, 0, &conn_id, 1, mode) < 0) {
+ 		fprintf(stderr,
+ 			"drmModeSetCrtc: %s\n"
+@@ -969,29 +1178,50 @@ int main(int argc, char **argv)
+ 			strerror(errno));
+ 		return 1;
+ 	}
++	if (wait_frame_advance(frame_sequence_pathname, frame_before) < 0) {
++		fprintf(stderr,
++			"initial framebuffer transaction did not complete: %s\n",
++			strerror(errno));
++		unlink(DFR_COMMITTED_PATH);
++		return 1;
++	}
++	if (publish_layout_file(DFR_COMMITTED_PATH, layout_idx) < 0) {
++		fprintf(stderr, "publish initial completed layout: %s\n",
++			strerror(errno));
++		unlink(DFR_COMMITTED_PATH);
++		return 1;
++	}
++	if (clear_pending_layout() < 0) {
++		fprintf(stderr, "clear initial pending-layout fence: %s\n",
++			strerror(errno));
++		return 1;
++	}
++	pending_fence_armed = 0;
+ 	printf("mode set; layout '%s' (%d keys) on the bar.\n",
+ 	       layout->name, layout->nkeys);
+ 	printf("zone table (left->right):");
+ 	for (int i = 0; i < layout->nkeys; i++)
+ 		printf(" [%s]", layout->keys[i].label);
+-	printf("\nSIGUSR1 cycles layout; Ctrl-C / SIGTERM exits (bar goes dark).\n");
++	printf("\nSIGUSR1 requests the next layout; Ctrl-C / SIGTERM exits.\n");
+ 
+ 	int64_t next_ind = 0;   /* refresh immediately on first indicator layout */
+ 	int64_t redraw_at = 0, last_push = now_ms();
+ 	int redraw_pending = 0;
++	int layout_commit_pending = 0;
+ 	while (!g_stop) {
+-		if (g_cycle) {
+-			g_cycle = 0;
+-			g_setlayout = (layout_idx + 1) % DFR_NLAYOUTS;
++		int idx = -1;
++		if (take_layout_request(&layout_signals, layout_idx, &idx) < 0) {
++			fprintf(stderr, "layout signal synchronization: %s\n",
++				strerror(errno));
++			break;
+ 		}
+-		if (g_setlayout >= 0) {
+-			int idx = g_setlayout;
+-			g_setlayout = -1;
++		if (idx >= 0) {
+ 			if (idx < DFR_NLAYOUTS && idx != layout_idx) {
+ 				layout_idx = idx;
+ 				layout = &dfr_layouts[layout_idx];
+ 				next_ind = 0;   /* fresh values for the new layout */
+ 				redraw_pending = 1;
++				layout_commit_pending = 1;
+ 				redraw_at = now_ms() + FRAME_SETTLE_MS;
+ 				printf("set layout '%s'\n", layout->name);
+ 				fflush(stdout);
+@@ -1005,10 +1235,49 @@ int main(int argc, char **argv)
+ 		int64_t t = now_ms();
+ 		if (redraw_pending && t >= redraw_at &&
+ 		    t - last_push >= FRAME_INTERVAL_MS) {
+-			draw_layout(layout);
+-			drmModeDirtyFB(fd, fb_id, NULL, 0);
++			int can_submit = 1;
++			if (layout_commit_pending &&
++			    publish_layout_file(DFR_PENDING_PATH, layout_idx) < 0) {
++				fprintf(stderr, "warning: arm pending-layout fence: %s\n",
++					strerror(errno));
++				can_submit = 0;
++			} else if (layout_commit_pending) {
++				pending_fence_armed = 1;
++			}
++			uint64_t before = 0;
++			if (!can_submit) {
++				/* Keep both pending flags set and retry after the frame throttle. */
++			} else if (read_frame_sequence(frame_sequence_pathname, &before) < 0) {
++				fprintf(stderr, "warning: read successful-frame counter: %s\n",
++					strerror(errno));
++			} else {
++				draw_layout(layout);
++				if (drmModeDirtyFB(fd, fb_id, NULL, 0) < 0) {
++					fprintf(stderr, "warning: drmModeDirtyFB: %s\n",
++						strerror(errno));
++				} else if (wait_frame_advance(frame_sequence_pathname, before) < 0) {
++					fprintf(stderr,
++						"warning: T1 framebuffer transaction for layout '%s' "
++						"did not complete: %s\n",
++						layout->name, strerror(errno));
++				} else if (publish_layout_file(DFR_COMMITTED_PATH,
++								       layout_idx) < 0) {
++					fprintf(stderr, "warning: publish completed layout '%s': %s\n",
++						layout->name, strerror(errno));
++				} else if (layout_commit_pending &&
++					   clear_pending_layout() < 0) {
++					fprintf(stderr,
++						"warning: clear pending-layout fence for '%s': %s\n",
++						layout->name, strerror(errno));
++				} else {
++					redraw_pending = 0;
++					if (layout_commit_pending) {
++						layout_commit_pending = 0;
++						pending_fence_armed = 0;
++					}
++				}
++			}
+ 			last_push = now_ms();
+-			redraw_pending = 0;
+ 		}
+ 		usleep(30000);
+ 	}
+@@ -1024,6 +1293,11 @@ int main(int argc, char **argv)
+ 	drmModeFreeResources(res);
+ 	drmDropMaster(fd);
+ 	close(fd);
++	/* A failed layout transaction deliberately leaves the fence fail-closed.
++	 * On an orderly, fully committed shutdown, remove any harmless stale file. */
++	if (!pending_fence_armed && clear_pending_layout() < 0)
++		fprintf(stderr, "warning: clear pending-layout fence on exit: %s\n",
++			strerror(errno));
+ 	printf("clean exit.\n");
+ 	return 0;
+ }
+diff --git a/touch-bar/dfrd/dfr-touchd.c b/touch-bar/dfrd/dfr-touchd.c
+index 72d3723..8275776 100644
+--- a/touch-bar/dfrd/dfr-touchd.c
++++ b/touch-bar/dfrd/dfr-touchd.c
+@@ -23,14 +23,20 @@
+  * device while bConfigurationValue == 2. Override with -d /dev/hidrawN.
+  *
+  * Run as root (needs /dev/hidrawN + /dev/uinput).
+- * SIGUSR1 cycles layout in lock-step with dfr-render (send to both).
++ * Layout signals are wakeups only. Before a layout-changing frame submission,
++ * dfr-render raises a fail-closed pending fence. It publishes the new hit map
++ * only after a complete bulk OUT, at least one device response, and a bounded
++ * response drain, then removes the fence. That is transport completion rather
++ * than panel pixel readback. New contacts remain suppressed while fenced;
++ * contacts already in progress finish against the map on which they began.
+  *
+- * STEP 2: DFR_ACT_CMD keys run their command IN THE DESKTOP USER'S GNOME
+- * session instead of injecting a key: double-fork, drop to the user
++ * STEP 2: DFR_ACT_CMD keys run their command in the desktop user's
++ * Omarchy/Hyprland session instead of injecting a key: double-fork, drop to
++ * the user
+  * (env DFR_USER / DFR_UID override; else owner of /run/user/<uid>; else
+  * uid 1000), set HOME / XDG_RUNTIME_DIR / DBUS_SESSION_BUS_ADDRESS /
+  * WAYLAND_DISPLAY / DISPLAY, then `/bin/sh -c "<cmd>"`. One launch per
+- * tap with a 300 ms debounce. Workspace commands wait for finger-up so a
++ * tap with a 160 ms debounce. Workspace commands wait for finger-up so a
+  * numbered button can distinguish an ordinary tap from a horizontal drag.
+  */
+ #include <stdio.h>
+@@ -61,13 +67,16 @@
+ #define DIGITIZER_IFACE 2     /* EP 0x83 lives on config-2 interface 2 */
+ #define FALLBACK_IFACE  6     /* second config-2 HID interface (EP 0x87) */
+ #define RELEASE_MS 150        /* no report for this long => finger up */
+-#define LAUNCH_DEBOUNCE_MS 300 /* min gap between DFR_ACT_CMD launches */
++#define LAUNCH_DEBOUNCE_MS 160 /* fast taps without duplicate command launches */
++#define LAYOUT_SYNC_MS 50
++#define DFR_COMMITTED_PATH "/run/t1-custom-bar/layout.committed"
++#define DFR_PENDING_PATH "/run/t1-custom-bar/layout.pending"
+ 
+-static volatile sig_atomic_t g_stop, g_cycle, g_setlayout = -1;
++static volatile sig_atomic_t g_stop, g_layout_wake = 1;
+ static pid_t g_renderer_pid;
+ static void on_stop(int s) { (void)s; g_stop = 1; }
+-static void on_usr1(int s) { (void)s; g_cycle = 1; }
+-static void on_rt(int s)   { g_setlayout = s - SIGRTMIN; }  /* SIGRTMIN+i -> set layout i */
++static void on_usr1(int s) { (void)s; g_layout_wake = 1; }
++static void on_rt(int s)   { (void)s; g_layout_wake = 1; }
+ 
+ /* ------------------------------------------------------------------ */
+ /* sysfs helpers                                                       */
+@@ -177,7 +186,7 @@ static int find_digitizer(char *dev_out, size_t out_len, int verbose)
+ }
+ 
+ /* ------------------------------------------------------------------ */
+-/* Launch DFR_ACT_CMD commands in the desktop user's GNOME session      */
++/* Launch DFR_ACT_CMD commands in the desktop user's Omarchy session   */
+ /* ------------------------------------------------------------------ */
+ static uid_t g_uid;
+ static gid_t g_gid;
+@@ -284,6 +293,35 @@ static int64_t now_ms(void)
+ 	return (int64_t)ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
+ }
+ 
++static int pending_fence_absent(void)
++{
++	struct stat st;
++	if (stat(DFR_PENDING_PATH, &st) == 0)
++		return 0;
++	return errno == ENOENT;
++}
++
++/* Double-check the fence around the atomic commit read. Missing, malformed, or
++ * unreadable protocol state is deliberately not ready: a new contact must not
++ * guess which frame is visible after a failed transaction. */
++static int read_ready_layout(int *layout_idx)
++{
++	if (!pending_fence_absent())
++		return -1;
++	FILE *f = fopen(DFR_COMMITTED_PATH, "r");
++	if (!f)
++		return -1;
++	int idx = -1;
++	int ok = fscanf(f, "%d", &idx) == 1;
++	if (fclose(f) < 0)
++		ok = 0;
++	if (!ok || idx < 0 || idx >= DFR_NLAYOUTS ||
++	    !pending_fence_absent())
++		return -1;
++	*layout_idx = idx;
++	return 0;
++}
++
+ /* ------------------------------------------------------------------ */
+ /* uinput (ported from dfr-switch.c)                                   */
+ /* ------------------------------------------------------------------ */
+@@ -298,13 +336,18 @@ static int uinput_open(void)
+ 		return -1;
+ 	}
+ 	ioctl(g_ui, UI_SET_EVBIT, EV_KEY);
+-	/* register every keycode of every layout so SIGUSR1 swaps need no re-create
+-	 * (skip DFR_ACT_CMD buttons / keycode 0 — they launch commands instead) */
++	/* Register every direct and chord key up front so layout swaps never need
++	 * to recreate the virtual input device. */
+ 	for (int l = 0; l < DFR_NLAYOUTS; l++)
+ 		for (int k = 0; k < dfr_layouts[l].nkeys; k++)
+-			if (dfr_layouts[l].keys[k].action == DFR_ACT_KEY &&
++			if ((dfr_layouts[l].keys[k].action == DFR_ACT_KEY ||
++			     dfr_layouts[l].keys[k].action == DFR_ACT_HOTKEY) &&
+ 			    dfr_layouts[l].keys[k].keycode > 0)
+ 				ioctl(g_ui, UI_SET_KEYBIT, dfr_layouts[l].keys[k].keycode);
++	ioctl(g_ui, UI_SET_KEYBIT, KEY_LEFTCTRL);
++	ioctl(g_ui, UI_SET_KEYBIT, KEY_LEFTALT);
++	ioctl(g_ui, UI_SET_KEYBIT, KEY_LEFTSHIFT);
++	ioctl(g_ui, UI_SET_KEYBIT, KEY_LEFTMETA);
+ 
+ 	struct uinput_setup us;
+ 	memset(&us, 0, sizeof us);
+@@ -336,6 +379,80 @@ static void emit(int type, int code, int value)
+ static void key_down(int k) { emit(EV_KEY, k, 1); emit(EV_SYN, SYN_REPORT, 0); }
+ static void key_up(int k)   { emit(EV_KEY, k, 0); emit(EV_SYN, SYN_REPORT, 0); }
+ 
++static void emit_modifiers(unsigned mods, int value, int reverse)
++{
++	static const struct {
++		unsigned flag;
++		int key;
++	} map[] = {
++		{ DFR_MOD_CTRL, KEY_LEFTCTRL },
++		{ DFR_MOD_ALT, KEY_LEFTALT },
++		{ DFR_MOD_SHIFT, KEY_LEFTSHIFT },
++		{ DFR_MOD_META, KEY_LEFTMETA },
++	};
++	if (reverse) {
++		for (int i = (int)(sizeof map / sizeof map[0]) - 1; i >= 0; i--)
++			if (mods & map[i].flag)
++				emit(EV_KEY, map[i].key, value);
++	} else {
++		for (size_t i = 0; i < sizeof map / sizeof map[0]; i++)
++			if (mods & map[i].flag)
++				emit(EV_KEY, map[i].key, value);
++	}
++}
++
++static void hotkey_pulse(int key, unsigned mods)
++{
++	emit_modifiers(mods, 1, 0);
++	emit(EV_KEY, key, 1);
++	emit(EV_SYN, SYN_REPORT, 0);
++	emit(EV_KEY, key, 0);
++	emit_modifiers(mods, 0, 1);
++	emit(EV_SYN, SYN_REPORT, 0);
++}
++
++static void hotkey_up(int key, unsigned mods)
++{
++	emit(EV_KEY, key, 0);
++	emit_modifiers(mods, 0, 1);
++	emit(EV_SYN, SYN_REPORT, 0);
++}
++
++static void modifiers_up(unsigned mods)
++{
++	if (!mods)
++		return;
++	emit_modifiers(mods, 0, 1);
++	emit(EV_SYN, SYN_REPORT, 0);
++}
++
++static void adopt_layout_index(int committed, int *layout_idx,
++			       const struct dfr_layout **layout,
++			       unsigned *down_mods, int dry_run)
++{
++	if (committed == *layout_idx)
++		return;
++	/* Adoption is only called without an active or suppressed finger. Still
++	 * release synthetic modifiers defensively before changing the hit map. */
++	if (!dry_run)
++		modifiers_up(*down_mods);
++	*down_mods = DFR_MOD_NONE;
++	*layout_idx = committed;
++	*layout = &dfr_layouts[*layout_idx];
++	printf("adopt committed layout '%s'\n", (*layout)->name);
++	fflush(stdout);
++}
++
++static int sync_ready_layout(int *layout_idx, const struct dfr_layout **layout,
++			     unsigned *down_mods, int dry_run)
++{
++	int committed;
++	if (read_ready_layout(&committed) < 0)
++		return -1;
++	adopt_layout_index(committed, layout_idx, layout, down_mods, dry_run);
++	return 0;
++}
++
+ static int workspace_number(const struct dfr_key *k)
+ {
+ 	if (k->indicator < DFR_IND_WORKSPACE_1 ||
+@@ -348,7 +465,8 @@ static int workspace_number(const struct dfr_key *k)
+  * share the same zones. A drag from one numbered zone to another merges all
+  * source-workspace windows into the target; releasing anywhere else is the
+  * ordinary source-workspace tap. */
+-static void end_contact(int *down, int *down_key, int *drag_source,
++static void end_contact(int *down, int *down_key, unsigned *down_mods,
++			int *drag_source,
+ 			int *drag_target, const char **down_cmd, int dry_run,
+ 			int verbose, int64_t *last_launch)
+ {
+@@ -380,7 +498,10 @@ static void end_contact(int *down, int *down_key, int *drag_source,
+ 			printf("UP workspace action debounced\n");
+ 		}
+ 	} else if (!dry_run && *down_key) {
+-		key_up(*down_key);
++		if (*down_mods)
++			hotkey_up(*down_key, *down_mods);
++		else
++			key_up(*down_key);
+ 	}
+ 
+ 	if (verbose && !*drag_source) {
+@@ -389,6 +510,7 @@ static void end_contact(int *down, int *down_key, int *drag_source,
+ 	}
+ 	*down = 0;
+ 	*down_key = 0;
++	*down_mods = DFR_MOD_NONE;
+ 	*drag_source = 0;
+ 	*drag_target = 0;
+ 	*down_cmd = NULL;
+@@ -418,12 +540,12 @@ int main(int argc, char **argv)
+ 			dry_run = 1;   /* parse + print, no uinput injection */
+ 		} else {
+ 			fprintf(stderr,
+-				"usage: %s [-l fn|media|ctrl|alt|meta] [-d /dev/hidrawN] [-p renderer-pid] [-v] [-n]\n"
++				"usage: %s [-l layout] [-d /dev/hidrawN] [-p renderer-pid] [-v] [-n]\n"
+ 				"  -v  verbose (dump raw reports + candidates)\n"
+ 				"  -n  dry run: print taps, do not inject keys / launch commands\n"
+ 				"  DFR_USER / DFR_UID : desktop user for command buttons\n"
+ 				"                       (default: owner of /run/user/<uid>)\n"
+-				"  SIGUSR1 cycles layout (send to dfr-render too!)\n",
++				"  layout signals wake a read of dfr-render's committed state\n",
+ 				argv[0]);
+ 			return 2;
+ 		}
+@@ -465,33 +587,24 @@ int main(int argc, char **argv)
+ 	fflush(stdout);
+ 
+ 	int down = 0, down_key = 0;     /* down_key == 0: contact w/o key (cmd button) */
++	int suppressed_contact = 0;     /* began while layout protocol was not ready */
++	unsigned down_mods = DFR_MOD_NONE;
+ 	int drag_source = 0, drag_target = 0;
+ 	const char *down_cmd = NULL;
+ 	int float_off = -1;        /* auto-detected: 0, or 1 if reports are ID-prefixed */
+ 	int logged_size = 0;
+ 	int64_t last_launch = 0;
++	int64_t next_layout_sync = 0;
+ 	uint8_t buf[256];
+ 
+ 	while (!g_stop) {
+-		if (g_cycle) {
+-			g_cycle = 0;
+-			g_setlayout = (layout_idx + 1) % DFR_NLAYOUTS;
+-		}
+-		if (g_setlayout >= 0) {
+-			int idx = g_setlayout;
+-			g_setlayout = -1;
+-			if (idx < DFR_NLAYOUTS && idx != layout_idx) {
+-				if (down) {           /* don't leave a key stuck across swap */
+-					if (!dry_run && down_key) key_up(down_key);
+-					down = 0;
+-					down_key = drag_source = drag_target = 0;
+-					down_cmd = NULL;
+-				}
+-				layout_idx = idx;
+-				layout = &dfr_layouts[layout_idx];
+-				printf("set layout '%s'\n", layout->name);
+-				fflush(stdout);
+-			}
++		int64_t loop_now = now_ms();
++		if (g_layout_wake || loop_now >= next_layout_sync) {
++			g_layout_wake = 0;
++			next_layout_sync = loop_now + LAYOUT_SYNC_MS;
++			if (!down && !suppressed_contact)
++				sync_ready_layout(&layout_idx, &layout, &down_mods,
++						  dry_run);
+ 		}
+ 
+ 		struct pollfd pfd = { .fd = fd, .events = POLLIN };
+@@ -503,8 +616,11 @@ int main(int argc, char **argv)
+ 			break;
+ 		}
+ 		if (pr == 0) {                       /* silence => finger lifted */
+-			end_contact(&down, &down_key, &drag_source, &drag_target,
++			end_contact(&down, &down_key, &down_mods,
++				    &drag_source, &drag_target,
+ 				    &down_cmd, dry_run, verbose, &last_launch);
++			suppressed_contact = 0;
++			sync_ready_layout(&layout_idx, &layout, &down_mods, dry_run);
+ 			continue;
+ 		}
+ 
+@@ -527,8 +643,17 @@ int main(int argc, char **argv)
+ 				printf(" %02x", buf[i]);
+ 			printf("\n");
+ 		}
+-		if (n < 4)
++		/* Authoritative sync is after dequeuing each report, not merely before
++		 * poll. The double fence check makes a ready result safe for this report. */
++		int report_layout_ready = 1;
++		if (!down && !suppressed_contact &&
++		    sync_ready_layout(&layout_idx, &layout, &down_mods, dry_run) < 0)
++			report_layout_ready = 0;
++		if (n < 4) {
++			if (!down && !report_layout_ready)
++				suppressed_contact = 1;
+ 			continue;
++		}
+ 
+ 		/* locate the float32 X: offset 0 on the wire (proven); offset 1
+ 		 * if the HID stack hands us a report-ID-prefixed buffer */
+@@ -547,8 +672,12 @@ int main(int argc, char **argv)
+ 					printf("  (no plausible X at offset 0/1 — "
+ 					       "release frame or wrong node?)\n");
+ 				/* treat as release */
+-				end_contact(&down, &down_key, &drag_source, &drag_target,
++				end_contact(&down, &down_key, &down_mods,
++					    &drag_source, &drag_target,
+ 					    &down_cmd, dry_run, verbose, &last_launch);
++				suppressed_contact = 0;
++				sync_ready_layout(&layout_idx, &layout, &down_mods,
++						  dry_run);
+ 				continue;
+ 			}
+ 			printf("float X found at report offset %d\n", float_off);
+@@ -559,8 +688,20 @@ int main(int argc, char **argv)
+ 		memcpy(&x, buf + float_off, 4);
+ 
+ 		if (x < 0.45f || x > 1.05f) {        /* explicit release / junk */
+-			end_contact(&down, &down_key, &drag_source, &drag_target,
++			end_contact(&down, &down_key, &down_mods,
++				    &drag_source, &drag_target,
+ 				    &down_cmd, dry_run, verbose, &last_launch);
++			suppressed_contact = 0;
++			sync_ready_layout(&layout_idx, &layout, &down_mods, dry_run);
++			continue;
++		}
++
++		if (!down && (suppressed_contact || !report_layout_ready)) {
++			if (!suppressed_contact && verbose) {
++				printf("contact suppressed: layout transaction not ready\n");
++				fflush(stdout);
++			}
++			suppressed_contact = 1;
+ 			continue;
+ 		}
+ 
+@@ -573,6 +714,7 @@ int main(int argc, char **argv)
+ 			const struct dfr_key *k = &layout->keys[z];
+ 			down = 1;
+ 			down_key = 0;
++			down_mods = DFR_MOD_NONE;
+ 			drag_source = workspace_number(k);
+ 			drag_target = drag_source;
+ 			down_cmd = NULL;
+@@ -581,7 +723,6 @@ int main(int argc, char **argv)
+ 				if (idx >= 0 && idx != layout_idx) {
+ 					if (!dry_run && g_renderer_pid > 0)
+ 						kill(g_renderer_pid, SIGRTMIN + idx);
+-					g_setlayout = idx;
+ 				}
+ 				printf("DOWN x=%.3f nx=%.3f -> zone %d [%s] LAYER: %s%s\n",
+ 				       (double)x, (double)nx, z, k->label, k->cmd,
+@@ -606,6 +747,15 @@ int main(int argc, char **argv)
+ 				} else {
+ 					printf("DOWN zone %d [%s] CMD debounced\n", z, k->label);
+ 				}
++			} else if (k->action == DFR_ACT_HOTKEY) {
++				int hotkey = k->keycode;
++				unsigned modifiers = k->mods;
++				if (!dry_run && hotkey)
++					hotkey_pulse(hotkey, modifiers);
++				printf("DOWN x=%.3f nx=%.3f -> zone %d [%s] HOTKEY"
++				       " key=%d mods=0x%x%s\n", (double)x, (double)nx,
++				       z, k->label, hotkey, modifiers,
++				       dry_run ? " (dry)" : "");
+ 			} else {
+ 				down_key = k->keycode;
+ 				if (!dry_run && down_key)
+@@ -624,8 +774,14 @@ int main(int argc, char **argv)
+ 	}
+ 
+ 	/* Shutdown cancels a pending workspace drag rather than moving windows. */
+-	if (down && !dry_run && down_key)
+-		key_up(down_key);
++	if (!dry_run && down_key) {
++		if (down_mods)
++			hotkey_up(down_key, down_mods);
++		else if (down)
++			key_up(down_key);
++	} else if (!dry_run) {
++		modifiers_up(down_mods);
++	}
+ 	if (g_ui >= 0) {
+ 		ioctl(g_ui, UI_DEV_DESTROY);
+ 		close(g_ui);
+diff --git a/touch-bar/kernel/t1-touchbar-display/appletbdrm.c b/touch-bar/kernel/t1-touchbar-display/appletbdrm.c
+index 81d2fe4..f4fa147 100644
+--- a/touch-bar/kernel/t1-touchbar-display/appletbdrm.c
++++ b/touch-bar/kernel/t1-touchbar-display/appletbdrm.c
+@@ -6,10 +6,12 @@
+  */
+ 
+ #include <linux/align.h>
++#include <linux/atomic.h>
+ #include <linux/array_size.h>
+ #include <linux/bitops.h>
+ #include <linux/bug.h>
+ #include <linux/container_of.h>
++#include <linux/device.h>
+ #include <linux/err.h>
+ #include <linux/module.h>
+ #include <linux/overflow.h>
+@@ -136,6 +138,11 @@ struct appletbdrm_device {
+ 	struct drm_plane primary_plane;
+ 	struct drm_crtc crtc;
+ 	struct drm_encoder encoder;
++
++	/* Incremented after a complete framebuffer bulk OUT, at least one device
++	 * response, and a bounded response-queue drain. This is transport progress,
++	 * not panel pixel readback. Exposed read-only to the renderer in sysfs. */
++	atomic64_t successful_frame_sequence;
+ };
+ 
+ struct appletbdrm_plane_state {
+@@ -151,6 +158,30 @@ static inline struct appletbdrm_plane_state *to_appletbdrm_plane_state(struct dr
+ 	return container_of(state, struct appletbdrm_plane_state, base.base);
+ }
+ 
++static ssize_t successful_frame_sequence_show(struct device *dev,
++					      struct device_attribute *attr,
++					      char *buf)
++{
++	struct appletbdrm_device *adev = usb_get_intfdata(to_usb_interface(dev));
++
++	(void)attr;
++	if (!adev)
++		return -ENODEV;
++
++	return sysfs_emit(buf, "%lld\n",
++			  (long long)atomic64_read(&adev->successful_frame_sequence));
++}
++static DEVICE_ATTR_RO(successful_frame_sequence);
++
++static struct attribute *appletbdrm_attrs[] = {
++	&dev_attr_successful_frame_sequence.attr,
++	NULL,
++};
++
++static const struct attribute_group appletbdrm_attr_group = {
++	.attrs = appletbdrm_attrs,
++};
++
+ static int appletbdrm_send_request(struct appletbdrm_device *adev,
+ 				   struct appletbdrm_msg_request_header *request, size_t size)
+ {
+@@ -439,20 +470,25 @@ static int appletbdrm_flush_damage(struct appletbdrm_device *adev,
+ 		goto end_fb_cpu_access;
+ 
+ 	/*
+-	 * T1 (05ac:8600) answers a framebuffer update with a SHORT 16-byte header
+-	 * ack (size=0x10), not T2's 40-byte UDCL response. Don't require the UDCL
+-	 * msg or a matching timestamp; just drain the IN endpoint (a short bulk
++	 * T1 (05ac:8600) answers a framebuffer update with a SHORT 16-byte response
++	 * (size=0x10), not T2's 40-byte UDCL response. Don't require the UDCL msg or
++	 * a matching timestamp; just drain the IN endpoint (a short bulk
+ 	 * read is not an error) so the next update stays in sync.
+ 	 */
+ 	{
+ 		struct usb_device *udev = adev_to_udev(adev);
+-		int ack_size = 0, drains;
++		int response_size = 0, drains;
+ 
+ 		ret = usb_bulk_msg(udev, usb_rcvbulkpipe(udev, adev->in_ep),
+-				   response, sizeof(*response), &ack_size,
++				   response, sizeof(*response), &response_size,
+ 				   APPLETBDRM_BULK_MSG_TIMEOUT);
+ 		if (ret)
+ 			goto end_fb_cpu_access;
++		if (!response_size) {
++			ret = -EIO;
++			drm_err(drm, "empty framebuffer response\n");
++			goto end_fb_cpu_access;
++		}
+ 
+ 		/* A short packet completes one host read, but T1 can queue more
+ 		 * completion/status packets behind it. Drain those now; otherwise
+@@ -472,6 +508,16 @@ static int appletbdrm_flush_damage(struct appletbdrm_device *adev,
+ 			drm_dbg(drm, "drained extra frame response (%d bytes)\n",
+ 				extra_size);
+ 		}
++		if (drains == 8) {
++			ret = -EOVERFLOW;
++			drm_err(drm, "frame response queue did not quiesce\n");
++			goto end_fb_cpu_access;
++		}
++
++		/* This is the userspace-visible transport-completion point: the
++		 * framebuffer bulk OUT completed, at least one response arrived, and
++		 * the response queue drained without an error. It is not pixel readback. */
++		atomic64_inc(&adev->successful_frame_sequence);
+ 	}
+ 
+ end_fb_cpu_access:
+@@ -778,6 +824,13 @@ static int appletbdrm_probe(struct usb_interface *intf,
+ 	drm = &adev->drm;
+ 
+ 	usb_set_intfdata(intf, adev);
++	atomic64_set(&adev->successful_frame_sequence, 0);
++
++	ret = devm_device_add_group(dev, &appletbdrm_attr_group);
++	if (ret) {
++		drm_err(drm, "Failed to expose successful frame sequence (%d)\n", ret);
++		return ret;
++	}
+ 
+ 	dma_dev = usb_intf_get_dma_device(intf);
+ 	if (dma_dev) {

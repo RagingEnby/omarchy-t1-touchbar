@@ -28,17 +28,32 @@ load_hyprland_session() {
 }
 
 chatgpt_address() {
-  hyprctl clients -j | jq -r \
-    '.[] | select((.class | ascii_downcase) == "chatgpt") | .address' | head -n1
+  local active_json address
+  active_json=$(hyprctl activewindow -j 2>/dev/null || true)
+  address=$(jq -r \
+    'select((.class | ascii_downcase) as $class |
+      $class == "chatgpt" or $class == "codex" or
+      $class == "com.openai.chatgpt") | .address // empty' \
+    <<<"$active_json" 2>/dev/null || true)
+  if [[ $address =~ ^0x[0-9a-fA-F]+$ ]]; then
+    printf '%s\n' "$address"
+    return 0
+  fi
+  address=$(hyprctl clients -j | jq -r \
+    '.[] | select((.class | ascii_downcase) as $class |
+      $class == "chatgpt" or $class == "codex" or
+      $class == "com.openai.chatgpt") | .address' | head -n1)
+  [[ $address =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+  printf '%s\n' "$address"
 }
 
 focus_chatgpt() {
-  chatgpt_window=$(chatgpt_address)
+  chatgpt_window=$(chatgpt_address 2>/dev/null || true)
   if [[ -z $chatgpt_window ]]; then
     setsid uwsm-app -- /usr/bin/chatgpt >/dev/null 2>&1 &
     for _ in {1..50}; do
       sleep 0.1
-      chatgpt_window=$(chatgpt_address)
+      chatgpt_window=$(chatgpt_address 2>/dev/null || true)
       [[ -n $chatgpt_window ]] && break
     done
   fi
@@ -46,12 +61,43 @@ focus_chatgpt() {
   hyprctl dispatch "hl.dsp.focus({ window = \"address:$chatgpt_window\" })"
 }
 
-send_chatgpt_key() {
-  local key=$1
+send_chatgpt_chord() {
+  local mods=$1 key=$2
+  case $mods in
+    CTRL | 'CTRL ALT' | 'CTRL SHIFT') ;;
+    *) return 2 ;;
+  esac
+  [[ $key =~ ^[A-Z0-9_]+$ ]] || return 2
   focus_chatgpt
-  hyprctl dispatch "hl.dsp.send_key_state({ mods = \"CTRL\", key = \"$key\", state = \"down\", window = \"address:$chatgpt_window\" })"
+  hyprctl dispatch "hl.dsp.send_key_state({ mods = \"$mods\", key = \"$key\", state = \"down\", window = \"address:$chatgpt_window\" })"
   sleep 0.05
-  hyprctl dispatch "hl.dsp.send_key_state({ mods = \"CTRL\", key = \"$key\", state = \"up\", window = \"address:$chatgpt_window\" })"
+  hyprctl dispatch "hl.dsp.send_key_state({ mods = \"$mods\", key = \"$key\", state = \"up\", window = \"address:$chatgpt_window\" })"
+}
+
+active_window_address() {
+  local address
+  address=$(hyprctl activewindow -j | jq -r '.address // empty')
+  [[ $address =~ ^0x[0-9a-fA-F]+$ ]] || return 1
+  printf '%s\n' "$address"
+}
+
+# Send one of the fixed LazyVim leader sequences to the exact window that was
+# active when the button fired. No class, title, or touch-provided text enters
+# the dispatcher expression.
+send_active_sequence() {
+  local address key
+  address=$(active_window_address)
+  for key in "$@"; do
+    # Keep this list narrower than arbitrary xkbcommon names. In particular,
+    # `ESC` is not a keysym; the valid case-insensitive name is `Escape`.
+    case $key in
+      ESCAPE | SPACE | COMMA | [A-Z0-9]) ;;
+      *) return 2 ;;
+    esac
+    hyprctl dispatch "hl.dsp.send_key_state({ mods = \"\", key = \"$key\", state = \"down\", window = \"address:$address\" })"
+    hyprctl dispatch "hl.dsp.send_key_state({ mods = \"\", key = \"$key\", state = \"up\", window = \"address:$address\" })"
+    sleep 0.025
+  done
 }
 
 load_hyprland_session
@@ -79,10 +125,19 @@ case ${1:-} in
     ;;
   dictation-toggle) voxtype record toggle ;;
   gpt-open) focus_chatgpt ;;
-  gpt-new) send_chatgpt_key N ;;
-  gpt-command) send_chatgpt_key K ;;
-  gpt-copy) send_chatgpt_key C ;;
-  gpt-paste) send_chatgpt_key V ;;
+  gpt-new) send_chatgpt_chord CTRL N ;;
+  gpt-command) send_chatgpt_chord CTRL K ;;
+  gpt-files) send_chatgpt_chord CTRL P ;;
+  gpt-open-file) send_chatgpt_chord CTRL O ;;
+  gpt-sidebar) send_chatgpt_chord CTRL B ;;
+  gpt-bottom) send_chatgpt_chord CTRL J ;;
+  gpt-terminal) send_chatgpt_chord CTRL GRAVE ;;
+  gpt-review) send_chatgpt_chord 'CTRL ALT' B ;;
+  gpt-web) send_chatgpt_chord CTRL T ;;
+  gpt-voice) send_chatgpt_chord 'CTRL SHIFT' V ;;
+  gpt-dictate) send_chatgpt_chord 'CTRL SHIFT' D ;;
+  gpt-copy) send_chatgpt_chord CTRL C ;;
+  gpt-paste) send_chatgpt_chord CTRL V ;;
   menu-root) omarchy menu toggle root ;;
   menu-hardware) omarchy menu toggle hardware ;;
   menu-system) omarchy menu toggle system ;;
@@ -90,6 +145,17 @@ case ${1:-} in
   menu-clipboard) omarchy menu clipboard ;;
   menu-emoji) omarchy menu emoji ;;
   terminal) omarchy launch terminal ;;
+  terminal-tmux) omarchy launch terminal-tmux ;;
+  fullscreen) hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "fullscreen" })' ;;
+  nvim-files) send_active_sequence ESCAPE SPACE F F ;;
+  nvim-grep) send_active_sequence ESCAPE SPACE S G ;;
+  nvim-tree) send_active_sequence ESCAPE SPACE E ;;
+  nvim-git) send_active_sequence ESCAPE SPACE G G ;;
+  nvim-format) send_active_sequence ESCAPE SPACE C F ;;
+  nvim-diag) send_active_sequence ESCAPE SPACE S D ;;
+  nvim-terminal) send_active_sequence ESCAPE SPACE F T ;;
+  nvim-new) send_active_sequence ESCAPE SPACE F N ;;
+  nvim-buffers) send_active_sequence ESCAPE SPACE COMMA ;;
   lock) omarchy system lock ;;
   *)
     printf 'unknown Touch Bar action: %s\n' "${1:-}" >&2

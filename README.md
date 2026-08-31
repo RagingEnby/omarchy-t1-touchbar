@@ -167,10 +167,17 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
   project, not a PAM shortcut. See [docs/TOUCH-ID.md](docs/TOUCH-ID.md).
 - **Custom graphics and touch:** feasible today through T1 USB configuration 2,
   `appletbdrm`, a config-selection driver, and a userspace renderer/touch
-  daemon. A compiled and live-tested Omarchy overlay now provides direct
-  workspace actions, live occupied-workspace highlights, and dedicated ChatGPT,
-  media, dictation and system layers.
-  Its tap-to-toggle Fn watcher filters false up/down pulses that previously
+  daemon. A compiled Omarchy overlay now provides direct workspace actions,
+  occupied/current-workspace visuals, and automatic app-specific decks for
+  ChatGPT/Codex, browsers, terminals, VS Code, Omarchy Neovim/LazyVim, Files,
+  communications, writing apps, document readers, media and unrecognized apps.
+  Its Tokyo Night Prism interface uses rounded pills, restrained accents and
+  native modifier-chord actions.
+  A pending/committed USB transaction fence disables new contacts until the
+  matching hit map is safe to publish through rapid focus/Fn changes or USB
+  errors; it deliberately does not claim physical panel pixel readback. Its
+  tap-to-toggle Fn watcher filters false
+  up/down pulses that previously
   flooded the DRM driver, and its T1 completion-queue drain prevents repeated
   frames from wedging the bulk endpoint. The guarded live path and the
   Omarchy-specific persistent systemd installer have both been validated on the

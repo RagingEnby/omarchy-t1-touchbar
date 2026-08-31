@@ -6,30 +6,54 @@ Touch Bar userspace stack in
 
 It does not contain Apple firmware or machine-personalized data. The build
 script fetches the pinned public source, applies the small userspace patch in
-`patches/`, overlays `dfr-layout.h`, compiles the three daemons, and renders
+`patches/`, overlays `dfr-layout.h`, compiles the four daemons, and renders
 offline previews. Building does not switch the T1
 to USB configuration 2, unload a driver, install a service, or reboot.
 
-Internal layout names are retained for compatibility with upstream `dfr-fnd`:
+## Prism Deck
 
-| Gesture | Internal name | Visible row |
+The bar is an Omarchy-native, focus-aware control surface. A small local daemon
+listens to Hyprland's active-window socket and selects a reviewed layout for the
+focused application. It reads only the app class and window-title metadata in
+memory; it never captures page or document bodies, sends window data off the
+machine, logs titles, or turns titles into commands.
+
+| Focused app family | Automatic deck | Primary controls |
 |---|---|---|
-| default | `media` | Esc, workspaces 1-10, GPT, media, Omarchy, dictation |
-| Fn | `fn` | Esc and F1-F12 |
-| Ctrl+Fn | `ctrl` | status and system actions |
-| MEDIA button | `alt` | Back, brightness, playback and volume |
-| GPT button | `meta` | Back, ChatGPT, voice and productivity actions |
+| ChatGPT / Codex desktop app | `meta` | New, command search, files, panels, terminal, review, web, voice and dictation |
+| Chromium / Firefox / Brave / Zen | `browser` | Back, forward, reload, URL, tab navigation, new/close tab, find and media |
+| Foot / Omarchy TUIs / other terminals | `terminal` | Copy, paste, interrupt, clear, page scrollback, history, new terminal and tmux |
+| VS Code / Cursor | `code` | Save, undo/redo, find/replace, command palette, terminal, format and run |
+| Omarchy Editor launch (Neovim) / Neovide | `nvim` | LazyVim files, grep, tree, Git, save, format, diagnostics, terminal, new file and buffers |
+| Nautilus / Thunar / Nemo / Dolphin | `files` | Back, forward, up, home, path, search, new folder, rename, hidden files, copy/paste |
+| BlueBubbles / Discord / Slack / Signal / Teams | `comms` | New, search, edit actions, dictation, emoji, capture and AI |
+| Obsidian / writing apps | `document` | Save, undo/redo, find, formatting, zoom, print and fullscreen |
+| Evince / Okular / Papers | `reader` | Page navigation, first/last page, find, zoom, print and fullscreen |
+| mpv / VLC / Spotify / YouTube | `music` | Playback, mute, volume, brightness and dictation |
+| Everything else | `universal` | Edit, save, find, fullscreen, capture, dictation, AI, media and Omarchy |
 
-Workspace and Omarchy buttons launch scoped commands as the logged-in desktop
-user. GPT and MEDIA are internal layer actions: they repaint the bar without
-launching anything until a button inside the selected menu is tapped.
-The action helper supplies Omarchy's packaged root explicitly because the root
-touch daemon drops privileges into a deliberately minimal desktop environment.
+Every automatic deck keeps `ESC` at the far left, a one-tap Home button, an
+app-family identity pill, and a route to Media. The Home button opens the
+workspace deck and leaves it in place until focus changes again. Specific web
+apps are classified before the generic browser, so a Discord or YouTube window
+gets communications or media controls rather than ordinary tab controls.
 
-The home row reads Hyprland's local IPC state every 400 ms. Workspace buttons
-with one or more app windows get a filled cyan background, bright outline and
-white number; empty workspaces stay dim. The renderer redraws only when the
-occupied-workspace mask changes, and no shell command is launched for polling.
+The renderer, kernel driver and touch mapper share a fail-closed layout
+transaction fence. The driver's read-only sequence advances only after a full
+framebuffer bulk OUT, at least one device response and a bounded response-queue
+drain. The renderer marks a frame pending before submission and atomically
+publishes the corresponding layout number only after that transaction succeeds;
+the touch mapper ignores new contacts while pending and adopts the publication
+only after all fingers are lifted. This is USB transaction fencing, not panel
+pixel readback, so it prevents unresolved frames from enabling a different hit
+map without pretending that Linux can inspect the OLED's physical pixels.
+
+The Tokyo Night Prism design uses rounded neutral pills, restrained theme
+accents and a fine color rail instead of full-button rainbow fills. On the Home
+deck, empty workspaces use muted numerals, occupied workspaces gain a cyan dot,
+and the current workspace becomes a bright blue selected pill. The renderer
+polls local Hyprland workspace state every 400 ms and redraws only when it
+changes.
 
 Workspace zones also accept a horizontal drag. A tap opens that workspace;
 dragging a number onto a different number moves every non-pinned window from
@@ -37,12 +61,13 @@ the source workspace into the destination, then opens the destination. The
 merge runs only after release over another numbered zone, so buttons outside
 the workspace strip are never drag targets.
 
-The pink microphone on the home row and `VOICE` in the GPT row directly toggle
-Omarchy's Voxtype recorder. Tap once to start, dictate, and tap again to stop,
-transcribe, and type into the focused field. This avoids synthetic F9 timing;
-the Fn row still exposes an ordinary F9 key for applications that need it.
+The pink microphone on Home—and `DICTATE` buttons outside the Codex row—directly
+toggle Omarchy's Voxtype recorder. Tap once to start, dictate, and tap again to
+stop, transcribe, and type into the focused field. In the Codex row, `VOICE` and
+`DICTATE` intentionally invoke Codex's own voice/dictation shortcuts. This
+avoids synthetic F9 timing; the Fn row still exposes an ordinary F9 key.
 
-## Button guide
+## Manual decks and gestures
 
 The complete custom interface is source-controlled in `dfr-layout.h`; the
 commands it may launch are allowlisted in `touchbar-action.sh`.
@@ -53,45 +78,59 @@ commands it may launch are allowlisted in `touchbar-action.sh`.
 | Home | `1`–`10` tap | Opens that Hyprland workspace |
 | Home | `1`–`10` drag | Moves all non-pinned windows from the first workspace to the drop workspace and opens it |
 | Home | highlighted number | Indicates that workspace currently contains at least one app window |
-| Home | `GPT` | Opens the GPT/productivity row |
+| Home | `GPT` | Opens the GPT/productivity row; its actions focus ChatGPT before sending their shortcut |
 | Home | `MEDIA` | Opens brightness, playback, and volume controls |
 | Home | `OM` | Opens the main Omarchy menu |
 | Home | microphone | Starts or stops Omarchy/Voxtype dictation |
 | Function | `ESC`, `F1`–`F12` | Sends the corresponding ordinary keyboard key |
-| System | `BACK` | Returns home |
+| System | Home icon | Returns home |
 | System | `KBD`, `WIFI`, `BT` | Opens the Omarchy hardware menu |
 | System | `BAT` | Opens the Omarchy system menu |
 | System | `CAPTURE` | Opens Omarchy capture tools |
 | System | `LOCK` | Locks the computer |
-| Media | `BACK` | Returns home |
+| Media | Home icon | Returns home |
 | Media | brightness icons | Changes display brightness |
 | Media | previous/play/next | Controls media playback |
 | Media | mute/volume icons | Controls audio volume |
-| GPT | `BACK` | Returns home |
-| GPT | `OPEN` | Opens or focuses ChatGPT |
-| GPT | `VOICE` | Starts or stops Omarchy/Voxtype dictation |
-| GPT | `NEW` | Sends ChatGPT's new-chat shortcut |
-| GPT | `CMD` | Sends ChatGPT's command/search shortcut |
-| GPT | `CLIP` | Opens Omarchy clipboard history |
-| GPT | `SHOT` | Opens Omarchy capture tools |
-| GPT | `COPY`, `PASTE` | Sends the corresponding ChatGPT shortcut |
-| GPT | `TERM` | Opens the Omarchy terminal |
-| GPT | `EMOJI` | Opens the Omarchy emoji picker |
+| Codex | Home icon | Returns home |
+| Codex | `NEW` | Starts a new chat (`Ctrl+N`) |
+| Codex | `CMD`, `FILES`, `OPEN` | Opens the command menu, searches files, or opens a folder (`Ctrl+K`, `Ctrl+P`, `Ctrl+O`) |
+| Codex | `SIDE`, `BOTTOM`, `TERM` | Toggles the sidebar, bottom panel, or terminal (`Ctrl+B`, `Ctrl+J`, Ctrl plus the grave/backtick key) |
+| Codex | `REVIEW`, `WEB` | Toggles review or opens a browser tab (`Ctrl+Alt+B`, `Ctrl+T`) |
+| Codex | `VOICE`, `DICTATE` | Starts Codex voice or prompt dictation (`Ctrl+Shift+V`, `Ctrl+Shift+D`) |
 
-Tap Fn to switch between the home and function rows. `Ctrl+Fn` opens the
-system row. `GPT`, `MEDIA`, and `BACK` change rows entirely inside the Touch
-Bar; they do not launch desktop windows by themselves.
+Those Codex defaults were checked against the installed Linux desktop package
+`openai-codex-desktop 26.820.80927-1`; the Touch Bar helper always focuses the
+exact Codex/ChatGPT window address before sending them. If a future desktop-app
+release changes its defaults, this table and the helper should be updated
+together.
+
+Tap Fn to switch between the current app deck and the function row; tapping it
+again returns to the exact deck that was visible before F1-F12. `Ctrl+Fn` opens
+the system row. The Home, GPT/AI, MEDIA and identity pills change rows entirely
+inside the Touch Bar; they do not launch desktop windows by themselves.
 
 The patch also filters the T1 keyboard's false Fn up/down pulses. Tap Fn once
-to show F1-F12 and tap it again to return home. Legitimate taps can be only
-90 ms apart. The renderer settles changes for 35 ms, keeps only the newest
-requested layout, and caps full-frame USB pushes at one every 120 ms. Rapid
-taps therefore remain responsive without flooding `appletbdrm`.
+to show F1-F12 and tap it again to return to the previous deck. Legitimate taps
+can be only 90 ms apart. The renderer settles changes for 35 ms, keeps only the
+newest requested layout, and caps full-frame USB pushes at one every 120 ms. Rapid
+taps therefore remain responsive without flooding `appletbdrm`. Native hotkey
+buttons pulse their modifier chord exactly once on initial contact through the
+same `uinput` keyboard, so holding CLOSE/NEW cannot key-repeat. Command buttons
+remain a fixed allowlist and run as the desktop user.
+
+Omarchy's Editor shortcut (`Super+Shift+N`, or `omarchy launch editor`) launches
+Neovim with the distinct `org.omarchy.nvim` app identity used by the automatic
+deck. Typing `nvim` inside an already-open generic terminal intentionally keeps
+the terminal deck because that existing Wayland window cannot change identity.
+Every LazyVim leader button sends Escape first, so it is safe to tap while
+Neovim is in Insert, Replace or Visual mode.
 
 The kernel half drains every queued T1 frame-completion/status packet after an
-upload. Reading only the first short packet eventually filled the bulk IN queue
-and made later bulk OUT transfers time out with `-110`. The combined fix passed
-12 alternating layouts at 250 ms and a 20-toggle test at 50 ms with no errors.
+upload and exposes its successful-frame sequence to the renderer. Reading only
+the first short packet eventually filled the bulk IN queue and made later bulk
+OUT transfers time out with `-110`. The combined fix passed 12 alternating
+layouts at 250 ms and a 20-toggle test at 50 ms with no errors.
 
 ## Build and preview safely
 
@@ -154,9 +193,53 @@ AI/productivity row:
 
 ![AI row](previews/ai.png)
 
+Browser row:
+
+![Browser row](previews/browser.png)
+
+Terminal row:
+
+![Terminal row](previews/terminal.png)
+
+VS Code/Cursor row:
+
+![Code row](previews/code.png)
+
+Omarchy Neovim/LazyVim row:
+
+![Neovim row](previews/nvim.png)
+
+Files row:
+
+![Files row](previews/files.png)
+
+Communications row:
+
+![Communications row](previews/comms.png)
+
+Writing/document row:
+
+![Document row](previews/document.png)
+
+Universal fallback row:
+
+![Universal row](previews/universal.png)
+
+Document-reader row:
+
+![Reader row](previews/reader.png)
+
+Music/video row:
+
+![Music row](previews/music.png)
+
 Media row:
 
 ![Media row](previews/media.png)
+
+System/status row:
+
+![System row](previews/system.png)
 
 ## Licensing and provenance
 

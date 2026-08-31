@@ -82,8 +82,13 @@ restore_firmware_bar() {
     "$state_root/dfr-render" \
     "$state_root/dfr-touchd" \
     "$state_root/dfr-fnd" \
+    "$state_root/dfr-contextd" \
     "$state_root/dfrd-run.sh" \
-    "$state_root/touchbar-action"
+    "$state_root/touchbar-action" \
+    "$state_root/layout.committed" \
+    "$state_root/layout.pending" \
+    "$state_root/contextd.pid" \
+    "$state_root/contextd.pid.tmp"
   rmdir -- "$state_root" 2>/dev/null || true
 }
 
@@ -101,7 +106,7 @@ start_custom_bar() {
 
   local required
   for required in \
-    dfr-render dfr-touchd dfr-fnd dfrd-run.sh touchbar-action \
+    dfr-render dfr-touchd dfr-fnd dfr-contextd dfrd-run.sh touchbar-action \
     appletbdrm.ko apple_dfr_cfgsel.ko; do
     [[ -e $install_root/$required ]] || fail "missing installed artifact: $install_root/$required"
   done
@@ -117,9 +122,15 @@ start_custom_bar() {
     fail 'T1 is not in the known-good firmware configuration 1'
 
   mkdir -p "$state_root"
+  rm -f -- \
+    "$state_root/layout.committed" \
+    "$state_root/layout.pending" \
+    "$state_root/contextd.pid" \
+    "$state_root/contextd.pid.tmp"
   install -m0755 "$install_root/dfr-render" "$state_root/dfr-render"
   install -m0755 "$install_root/dfr-touchd" "$state_root/dfr-touchd"
   install -m0755 "$install_root/dfr-fnd" "$state_root/dfr-fnd"
+  install -m0755 "$install_root/dfr-contextd" "$state_root/dfr-contextd"
   install -m0755 "$install_root/dfrd-run.sh" "$state_root/dfrd-run.sh"
   install -m0755 "$install_root/touchbar-action" "$state_root/touchbar-action"
   udevadm control --reload
@@ -143,7 +154,33 @@ start_custom_bar() {
     break
   done
 
-  exec "$state_root/dfrd-run.sh" media
+  local context_pid dfrd_pid stop_requested=0 wait_status=0
+  "$state_root/dfr-contextd" &
+  context_pid=$!
+  printf '%s\n' "$context_pid" > "$state_root/contextd.pid.tmp"
+  mv -f -- "$state_root/contextd.pid.tmp" "$state_root/contextd.pid"
+  "$state_root/dfrd-run.sh" media &
+  dfrd_pid=$!
+
+  # Keep both process trees under one service lifecycle. KillMode=mixed sends
+  # SIGTERM only to this main runner, so explicitly stop both children instead
+  # of leaving contextd alive until systemd's final SIGKILL timeout.
+  trap 'stop_requested=1; kill "$dfrd_pid" "$context_pid" 2>/dev/null || true' INT TERM
+  set +e
+  wait -n "$dfrd_pid" "$context_pid"
+  wait_status=$?
+  set -e
+  kill "$dfrd_pid" "$context_pid" 2>/dev/null || true
+  wait "$dfrd_pid" "$context_pid" 2>/dev/null || true
+  rm -f -- "$state_root/contextd.pid" "$state_root/contextd.pid.tmp"
+  trap - INT TERM
+
+  if ((stop_requested)); then
+    return 0
+  fi
+  printf 'ERROR: a custom Touch Bar userspace process exited unexpectedly.\n' >&2
+  ((wait_status != 0)) || wait_status=1
+  return "$wait_status"
 }
 
 case ${1:-} in

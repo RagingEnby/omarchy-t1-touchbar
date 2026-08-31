@@ -27,16 +27,37 @@ display stack at commit `982d97a61a0c834d03e7cf7af5203b11ad7bae44` and adds:
 - live filled highlights for workspaces that contain app windows;
 - drag-to-merge for moving all windows between numbered workspaces;
 - an Fn row containing Esc and F1-F12;
-- a MEDIA submenu with Back, brightness, playback and volume;
-- a GPT submenu with Back, ChatGPT/voice/clipboard/capture/copy/paste tools;
+- a MEDIA submenu with Home, brightness, playback and volume;
+- a Tokyo Night Prism visual system with rounded pills, accent rails, occupied
+  workspace dots and a distinct current-workspace selection;
+- automatic decks for ChatGPT/Codex, browsers, terminals, VS Code-style
+  editors, Omarchy Neovim/LazyVim, Files, communications, writing apps, document
+  readers, media and unknown applications;
+- single-pulse native modifier chords for application shortcuts, without
+  launching a shell for every ordinary key combination or repeating on hold;
 - a Control+Fn live status and system row.
 
 The home-row workspace actions dispatch directly to current Omarchy Hyprland,
 so they do not depend on synthetic F13-F22 bindings. GPT and MEDIA are true
 internal bar menus. The renderer reads Hyprland's local command socket every
-400 ms and fills occupied workspace buttons cyan while leaving empty ones dim.
-Only a changed occupancy mask triggers a frame, so the indicator stays current
-without shell polling or unnecessary T1 traffic.
+400 ms, marks occupied workspaces, and gives the active workspace a stronger
+selection state. Only changed state triggers a frame, so the indicators stay
+current without shell polling or unnecessary T1 traffic.
+
+`dfr-contextd` listens to Hyprland's local event socket and requests a finite,
+source-controlled deck whenever focus changes. It gives specific Chromium web
+apps such as Discord and YouTube priority over the generic browser profile,
+then recognizes native app classes and finally chooses a safe universal deck.
+Class and title text are never interpolated into a command or sent off-device.
+
+Layout switching uses a requested/pending/committed protocol. The patched
+driver increments a read-only sequence only after a complete framebuffer bulk
+OUT, at least one device response and bounded response draining. `dfr-render`
+coalesces requests, creates a pending fence before submission and publishes the
+corresponding layout only after that sequence advances; `dfr-touchd` ignores
+new contacts while pending and waits for both publication and finger-up before
+changing hitboxes. This is a fail-closed USB transaction fence, not physical
+panel pixel readback.
 
 The digitizer reports continuous horizontal position, not just taps. Press a
 number and slide onto another numbered button before lifting to merge every
@@ -44,14 +65,17 @@ non-pinned window from the first workspace into the second, then focus the
 destination. Lifting on the original number is an ordinary workspace tap;
 lifting outside the numbered strip falls back to that same tap.
 
-The pink microphone button is a direct `voxtype record toggle`: tap once to
-start Omarchy dictation and tap again to stop, transcribe, and type into the
-currently focused field. The GPT menu's `VOICE` button does the same. Calling
-Voxtype directly avoids the repeated sub-second recordings that synthetic F9
-press/release events could create on this digitizer.
+The pink Home microphone is a direct `voxtype record toggle`: tap once to start
+Omarchy dictation and tap again to stop, transcribe, and type into the currently
+focused field. `DICTATE` in the communications/music surfaces uses that same
+Omarchy action. The Codex row's `VOICE` and `DICTATE` instead invoke Codex's own
+shortcuts after focusing its desktop window. Calling Voxtype directly from the
+general surfaces avoids the repeated sub-second recordings synthetic F9 timing
+could create on this digitizer.
 
 The userspace patch also coalesces noisy Fn up/down events:
-tap Fn once for the function row and again for home. A 90 ms edge filter keeps
+tap Fn once for the function row and again for the previously visible app deck.
+A 90 ms edge filter keeps
 fast taps, while a latest-state-wins renderer schedules at most one full-frame
 USB push every 120 ms. Fn releases never redraw the bar.
 
@@ -59,11 +83,18 @@ The same patch fixes the deeper freeze cause in `appletbdrm`: T1 can queue
 multiple short frame-completion/status packets, while the original adaptation
 read only one. That backlog eventually blocked the bulk OUT endpoint with
 `-ETIMEDOUT (-110)`. Draining the bounded completion queue after every frame
-kept both 250 ms switching and a 20-toggle/50 ms stress run error-free.
+and publishing its success counter kept both 250 ms switching and a
+20-toggle/50 ms stress run error-free.
 
 ![Omarchy home row](../custom-bar/previews/home.png)
 
 ![Omarchy AI row](../custom-bar/previews/ai.png)
+
+![Omarchy browser row](../custom-bar/previews/browser.png)
+
+![Omarchy terminal row](../custom-bar/previews/terminal.png)
+
+![Omarchy Neovim row](../custom-bar/previews/nvim.png)
 
 Build and render every row without changing the live T1:
 
@@ -72,8 +103,8 @@ Build and render every row without changing the live T1:
 ```
 
 The build checks every drawn zone against the touch-coordinate mapping and
-compiles the renderer, touch daemon and Fn watcher. It deliberately does not
-install or activate display mode.
+compiles the renderer, touch daemon, Fn watcher and app-context daemon. It does
+not install or activate display mode.
 
 A guarded session-only smoke test is available after reviewing the code:
 
@@ -84,7 +115,7 @@ sudo ./scripts/live-custom-bar.sh stop
 ```
 
 The live test verifies the exact model, pinned source revision, safe iBridge
-slot fix, configuration transition, DRM card and all three daemons. Its udev
+slot fix, configuration transition, DRM card and all four daemons. Its udev
 rule and service live under `/run`; it neither enables boot persistence nor
 reboots. Any failed gate attempts to restore the firmware configuration-1 bar.
 
@@ -215,8 +246,8 @@ module.
 
 The current upstream installer contains GNOME-specific commands and assumptions
 about an older `apple-ib-drv` DKMS source version. Running it unchanged on this
-stack is not recommended. The display protocol is proven; the remaining work is
-a careful Omarchy packaging/integration port.
+stack is not recommended. The display path is demonstrated on the supported T1
+machine; the repository carries the guarded Omarchy packaging and integration.
 
 ## Rollback design
 

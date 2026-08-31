@@ -228,6 +228,19 @@ diff --git a/touch-bar/dfrd/dfrd-run.sh b/touch-bar/dfrd/dfrd-run.sh
 index 6f702ac..8b7223a 100755
 --- a/touch-bar/dfrd/dfrd-run.sh
 +++ b/touch-bar/dfrd/dfrd-run.sh
+@@ -10,9 +10,9 @@
+ # Usage: sudo ./dfrd-run.sh [layout] [extra dfr-render flags...]
+ #   e.g. sudo ./dfrd-run.sh fn
+ #        sudo ./dfrd-run.sh fn --flip-short      # if labels are mirrored
+-# Layout swap while running:  sudo kill -USR1 -- -<pgid-of-this-script>
+-#   (both daemons cycle layouts on SIGUSR1; this script puts them in one
+-#    process group so one signal reaches both)
++# Layout swap while running: sudo kill -USR1 <renderer-pid>
++#   Signal dfr-render only; dfr-touchd follows the committed layout after the
++#   renderer completes the frame transaction.
+ 
+ set -u
+ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 @@ -99,7 +99,7 @@ if ! kill -0 "$RPID" 2>/dev/null; then
  fi
  
@@ -237,12 +250,20 @@ index 6f702ac..8b7223a 100755
  TPID=$!
  sleep 1
  if ! kill -0 "$TPID" 2>/dev/null; then
-@@ -119,7 +119,7 @@ if ! kill -0 "$FPID" 2>/dev/null; then
+@@ -113,13 +113,14 @@ echo "dfrd: starting Fn-layer watcher..."
+ "$DIR/dfr-fnd" "$RPID" "$TPID" &
+ FPID=$!
+ sleep 1
+ if ! kill -0 "$FPID" 2>/dev/null; then
+-    echo "WARNING: dfr-fnd exited (no keyboard? Fn-switching disabled, bar still works)" >&2
++    echo "ERROR: dfr-fnd exited (no T1 keyboard; refusing a bar without Fn/F-keys)" >&2
+     FPID=""
++    exit 78
  fi
  
  echo "dfrd: up. render=$RPID touchd=$TPID fnd=${FPID:-none}. Ctrl-C to stop."
 -echo "dfrd: default 'media' strip; HOLD Fn for F-keys (Ctrl/Alt/Cmd+Fn = extra layers once defined)."
-+echo "dfrd: default 'media' strip; TAP Fn to toggle F-keys (tap again for home)."
++echo "dfrd: app-aware strip; TAP Fn for F-keys (tap again for the current deck)."
  # Block until a daemon exits on its own (crash). A trapped INT/TERM instead
  # runs on_signal, which exits directly — so we never fall through and spin here.
  # The EXIT trap (cleanup) reaps the rest on the way out.

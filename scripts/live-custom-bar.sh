@@ -43,6 +43,11 @@ wait_for_config() {
 restore_firmware_bar() {
   local hid_path hid driver path config
   systemctl stop "$unit" >/dev/null 2>&1 || true
+  rm -f -- \
+    "$state_root/layout.committed" \
+    "$state_root/layout.pending" \
+    "$state_root/contextd.pid" \
+    "$state_root/contextd.pid.tmp"
 
   # These are loaded directly from the build tree with insmod, so use rmmod;
   # modprobe -r may not resolve an out-of-tree module absent from modules.dep.
@@ -99,6 +104,7 @@ start_live() {
   local required
   for required in \
     "$dfrd_root/dfr-render" "$dfrd_root/dfr-touchd" "$dfrd_root/dfr-fnd" \
+    "$dfrd_root/dfr-contextd" \
     "$dfrd_root/dfrd-run.sh" "$kmod_root/appletbdrm.ko" \
     "$kmod_root/apple_dfr_cfgsel.ko"; do
     [[ -e $required ]] || fail "missing build artifact: $required"
@@ -115,9 +121,15 @@ start_live() {
   systemctl is-active --quiet "$unit" && fail 'custom bar is already active'
 
   mkdir -p "$state_root" /run/udev/rules.d
+  rm -f -- \
+    "$state_root/layout.committed" \
+    "$state_root/layout.pending" \
+    "$state_root/contextd.pid" \
+    "$state_root/contextd.pid.tmp"
   install -m0755 "$dfrd_root/dfr-render" "$state_root/dfr-render"
   install -m0755 "$dfrd_root/dfr-touchd" "$state_root/dfr-touchd"
   install -m0755 "$dfrd_root/dfr-fnd" "$state_root/dfr-fnd"
+  install -m0755 "$dfrd_root/dfr-contextd" "$state_root/dfr-contextd"
   install -m0755 "$dfrd_root/dfrd-run.sh" "$state_root/dfrd-run.sh"
   install -m0755 "$repo_root/custom-bar/touchbar-action.sh" "$state_root/touchbar-action"
   install -m0644 "$dfrd_root/99-touchbar-dfr.rules" "$runtime_rule"
@@ -136,7 +148,31 @@ start_live() {
   local started_at
   started_at=$(date --iso-8601=seconds)
   systemd-run --quiet --unit "$unit" --collect --property=Type=simple \
-    "$state_root/dfrd-run.sh" media
+    /usr/bin/bash -c \
+    'set -uo pipefail
+context_pid=
+dfrd_pid=
+cleanup() {
+  local child
+  trap - INT TERM
+  for child in "$dfrd_pid" "$context_pid"; do
+    [[ $child =~ ^[1-9][0-9]*$ ]] && kill "$child" 2>/dev/null || true
+  done
+  for child in "$dfrd_pid" "$context_pid"; do
+    [[ $child =~ ^[1-9][0-9]*$ ]] && wait "$child" 2>/dev/null || true
+  done
+  rm -f -- /run/t1-custom-bar/contextd.pid /run/t1-custom-bar/contextd.pid.tmp
+}
+trap "cleanup; exit 0" INT TERM
+"/run/t1-custom-bar/dfr-contextd" &
+context_pid=$!
+printf "%s\n" "$context_pid" > /run/t1-custom-bar/contextd.pid.tmp
+mv -f -- /run/t1-custom-bar/contextd.pid.tmp /run/t1-custom-bar/contextd.pid
+"/run/t1-custom-bar/dfrd-run.sh" media &
+dfrd_pid=$!
+wait -n "$context_pid" "$dfrd_pid" 2>/dev/null || true
+cleanup
+exit 1'
 
   for _ in {1..40}; do
     systemctl is-active --quiet "$unit" && break
@@ -154,16 +190,48 @@ start_live() {
   done
   [[ $found -eq 1 ]] || fail 'configuration 2 is active but appletbdrm has no DRM card'
 
-  local ready=0
+  local ready=0 context_pid context_exe dfrd_line
+  local render_pid render_exe touch_pid touch_exe fnd_pid fnd_exe
   for _ in {1..40}; do
     systemctl is-active --quiet "$unit"
-    if journalctl -u "$unit" --since "$started_at" --no-pager | grep -q 'dfrd: up'; then
+    context_pid=''
+    context_exe=''
+    render_pid=''
+    render_exe=''
+    touch_pid=''
+    touch_exe=''
+    fnd_pid=''
+    fnd_exe=''
+    [[ -r $state_root/contextd.pid ]] && read -r context_pid < "$state_root/contextd.pid"
+    if [[ $context_pid =~ ^[1-9][0-9]*$ ]] && kill -0 "$context_pid" 2>/dev/null; then
+      context_exe=$(readlink -f "/proc/$context_pid/exe" 2>/dev/null || true)
+    fi
+    dfrd_line=$(journalctl -u "$unit" --since "$started_at" --no-pager -o cat |
+      sed -n '/dfrd: up\./p' | tail -n1)
+    render_pid=$(sed -n 's/.*render=\([0-9][0-9]*\).*/\1/p' <<<"$dfrd_line")
+    touch_pid=$(sed -n 's/.*touchd=\([0-9][0-9]*\).*/\1/p' <<<"$dfrd_line")
+    fnd_pid=$(sed -n 's/.*fnd=\([0-9][0-9]*\).*/\1/p' <<<"$dfrd_line")
+    if [[ $render_pid =~ ^[1-9][0-9]*$ ]] && kill -0 "$render_pid" 2>/dev/null; then
+      render_exe=$(readlink -f "/proc/$render_pid/exe" 2>/dev/null || true)
+    fi
+    if [[ $touch_pid =~ ^[1-9][0-9]*$ ]] && kill -0 "$touch_pid" 2>/dev/null; then
+      touch_exe=$(readlink -f "/proc/$touch_pid/exe" 2>/dev/null || true)
+    fi
+    if [[ $fnd_pid =~ ^[1-9][0-9]*$ ]] && kill -0 "$fnd_pid" 2>/dev/null; then
+      fnd_exe=$(readlink -f "/proc/$fnd_pid/exe" 2>/dev/null || true)
+    fi
+    if [[ $context_exe == "$state_root/dfr-contextd" ]] &&
+       [[ $render_exe == "$state_root/dfr-render" ]] &&
+       [[ $touch_exe == "$state_root/dfr-touchd" ]] &&
+       [[ $fnd_exe == "$state_root/dfr-fnd" ]] &&
+       [[ -s $state_root/layout.committed ]] &&
+       [[ ! -e $state_root/layout.pending ]]; then
       ready=1
       break
     fi
     sleep 0.25
   done
-  [[ $ready -eq 1 ]] || fail 'custom daemons did not reach their ready state'
+  [[ $ready -eq 1 ]] || fail 'renderer, touch, Fn and context daemons did not reach their ready state'
 
   trap - ERR
   printf 'Custom Touch Bar live test: ACTIVE\n'

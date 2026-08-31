@@ -42,7 +42,7 @@ index 32fc4e1..caa433d 100644
  
  /* ------------------------------------------------------------------ */
  /* Framebuffer + physical-coordinate drawing                            */
-@@ -358,8 +370,150 @@ static int utf8_enc(uint32_t cp, char *buf)
+@@ -358,8 +370,151 @@ static int utf8_enc(uint32_t cp, char *buf)
  }
  
  /* one cached label per indicator type; empty string = use static fallback */
@@ -113,7 +113,8 @@ index 32fc4e1..caa433d 100644
 +	char path[PATH_MAX];
 +	if (find_hypr_socket(path, sizeof path) < 0)
 +		return -1;
-+	if (strlen(path) >= sizeof(((struct sockaddr_un *)0)->sun_path))
++	size_t path_len = strlen(path);
++	if (path_len >= sizeof(((struct sockaddr_un *)0)->sun_path))
 +		return -1;
 +
 +	int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
@@ -125,7 +126,7 @@ index 32fc4e1..caa433d 100644
 +	struct sockaddr_un addr;
 +	memset(&addr, 0, sizeof addr);
 +	addr.sun_family = AF_UNIX;
-+	snprintf(addr.sun_path, sizeof addr.sun_path, "%s", path);
++	memcpy(addr.sun_path, path, path_len + 1);
 +	if (connect(fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
 +		close(fd);
 +		return -1;

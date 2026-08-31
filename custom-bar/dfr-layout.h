@@ -6,13 +6,16 @@
  * 982d97a61a0c834d03e7cf7af5203b11ad7bae44. The renderer and touch daemon
  * compile this same file, so the painted zones and touch targets stay aligned.
  *
- * dfr-fnd expects the layout names below. We retain those internal names while
- * assigning Omarchy-friendly roles:
- *   media = home row (default; tap Fn again to return)
+ * dfr-fnd expects the first five layout names below. We retain those internal
+ * names while assigning Omarchy-friendly roles, then add focus-driven decks:
+ *   media = home row (default/manual workspace deck)
  *   fn    = Escape and F1-F12
  *   ctrl  = live system row
  *   alt   = media/brightness row
  *   meta  = AI/productivity row
+ *   browser, terminal, code, nvim, files, comms, document, reader, music,
+ *   universal
+ *          = automatic active-app control surfaces
  */
 #ifndef DFR_LAYOUT_H
 #define DFR_LAYOUT_H
@@ -23,6 +26,15 @@ enum dfr_action {
 	DFR_ACT_KEY = 0,
 	DFR_ACT_CMD = 1,
 	DFR_ACT_LAYER = 2,
+	DFR_ACT_HOTKEY = 3,
+};
+
+enum dfr_mod {
+	DFR_MOD_NONE  = 0,
+	DFR_MOD_CTRL  = 1u << 0,
+	DFR_MOD_ALT   = 1u << 1,
+	DFR_MOD_SHIFT = 1u << 2,
+	DFR_MOD_META  = 1u << 3,
 };
 
 enum dfr_indicator {
@@ -52,6 +64,7 @@ struct dfr_key {
 	const char *cmd;
 	int indicator;
 	unsigned color;
+	unsigned mods;
 };
 
 struct dfr_layout {
@@ -69,20 +82,55 @@ struct dfr_layout {
 #define DFR_GLYPH_BRDOWN    "\U000F00DE"
 #define DFR_GLYPH_BRUP      "\U000F00E0"
 #define DFR_GLYPH_MIC       "\U000F036C"
+#define DFR_GLYPH_HOME      "\U000F02DC"
+#define DFR_GLYPH_WEB       "\U000F059F"
+#define DFR_GLYPH_TERM      "\U000F0489"
+#define DFR_GLYPH_CODE      "\U000F0174"
+#define DFR_GLYPH_FOLDER    "\U000F024B"
+#define DFR_GLYPH_CHAT      "\U000F0362"
+#define DFR_GLYPH_DOC       "\U000F0219"
+#define DFR_GLYPH_READ      "\U000F00BA"
+#define DFR_GLYPH_MUSIC     "\U000F075A"
+#define DFR_GLYPH_APP       "\U000F05C6"
+#define DFR_GLYPH_BACK      "\U000F004D"
+#define DFR_GLYPH_FORWARD   "\U000F0054"
+#define DFR_GLYPH_RELOAD    "\U000F0450"
+#define DFR_GLYPH_SEARCH    "\U000F0349"
+#define DFR_GLYPH_COPY      "\U000F018F"
+#define DFR_GLYPH_PASTE     "\U000F0192"
+#define DFR_GLYPH_SAVE      "\U000F0193"
+#define DFR_GLYPH_UNDO      "\U000F054C"
+#define DFR_GLYPH_REDO      "\U000F044E"
+#define DFR_GLYPH_PLUS      "\U000F0415"
+#define DFR_GLYPH_CLOSE     "\U000F0156"
+#define DFR_GLYPH_UP        "\U000F005D"
+#define DFR_GLYPH_TRASH     "\U000F01B4"
+#define DFR_GLYPH_FULLSCREEN "\U000F0293"
 
-#define DFR_COL_TEXT      0xFFF8FAFCu
-#define DFR_COL_ESC       0xFFFF5F57u
-#define DFR_COL_WORKSPACE 0xFF7DD3FCu
-#define DFR_COL_CHATGPT   0xFF74E0B5u
-#define DFR_COL_OMARCHY   0xFFFFB86Cu
-#define DFR_COL_VOICE     0xFFFF79C6u
-#define DFR_COL_ACTION    0xFFBD93F9u
-#define DFR_COL_STATUS    0xFF8BE9FDu
-#define DFR_COL_BRIGHT    0xFFFFC107u
-#define DFR_COL_SKIP      0xFF64B5F6u
-#define DFR_COL_PLAY      0xFF66BB6Au
-#define DFR_COL_MUTE      0xFFFF7043u
-#define DFR_COL_VOL       0xFF42A5F5u
+/* Tokyo Night accents from the active Omarchy theme. The renderer uses these
+ * sparingly for glyphs and rails over its neutral Prism surfaces. */
+#define DFR_COL_TEXT      0xFFC0CAF5u
+#define DFR_COL_ESC       0xFFF7768Eu
+#define DFR_COL_WORKSPACE 0xFF0DB9D7u
+#define DFR_COL_CHATGPT   0xFF9ECE6Au
+#define DFR_COL_OMARCHY   0xFFE0AF68u
+#define DFR_COL_VOICE     0xFFBB9AF7u
+#define DFR_COL_ACTION    0xFFAD8EE6u
+#define DFR_COL_STATUS    0xFF449DABu
+#define DFR_COL_BRIGHT    0xFFE0AF68u
+#define DFR_COL_SKIP      0xFF7AA2F7u
+#define DFR_COL_PLAY      0xFF9ECE6Au
+#define DFR_COL_MUTE      0xFFF7768Eu
+#define DFR_COL_VOL       0xFF7AA2F7u
+
+#define DFR_HOTKEY(_label, _key, _weight, _mods, _color) \
+	{ (_label), (_key), (_weight), DFR_ACT_HOTKEY, 0, DFR_IND_NONE, (_color), (_mods) }
+#define DFR_LAYER(_label, _weight, _layer, _color) \
+	{ (_label), 0, (_weight), DFR_ACT_LAYER, (_layer), DFR_IND_NONE, (_color), DFR_MOD_NONE }
+#define DFR_COMMAND(_label, _weight, _command, _color) \
+	{ (_label), 0, (_weight), DFR_ACT_CMD, (_command), DFR_IND_NONE, (_color), DFR_MOD_NONE }
+#define DFR_KEY(_label, _key, _weight, _color) \
+	{ (_label), (_key), (_weight), DFR_ACT_KEY, 0, DFR_IND_NONE, (_color), DFR_MOD_NONE }
 
 /* Fn: the complete physical function row. F9 already has Omarchy's
  * push-to-talk press/release bindings, so holding the F9 zone dictates. */
@@ -124,6 +172,8 @@ static const struct dfr_key dfr_keys_media[] = {
 
 /* Ctrl+Fn: live status plus safe Omarchy system surfaces. */
 static const struct dfr_key dfr_keys_ctrl[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.0f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.8f, "media", DFR_COL_OMARCHY),
 	{ "KBD", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-hardware", DFR_IND_KBDLIGHT, DFR_COL_STATUS },
 	{ "BAT", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-system", DFR_IND_BATTERY, DFR_COL_STATUS },
 	{ "WIFI", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-hardware", DFR_IND_WIFI, DFR_COL_STATUS },
@@ -134,7 +184,8 @@ static const struct dfr_key dfr_keys_ctrl[] = {
 
 /* Option+Fn: media and brightness. */
 static const struct dfr_key dfr_keys_alt[] = {
-	{ "BACK", 0, 1.4f, DFR_ACT_LAYER, "media", DFR_IND_NONE, DFR_COL_ESC },
+	DFR_KEY("ESC", KEY_ESC, 1.0f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.8f, "media", DFR_COL_OMARCHY),
 	{ DFR_GLYPH_BRDOWN, KEY_BRIGHTNESSDOWN, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_BRIGHT },
 	{ DFR_GLYPH_BRUP, KEY_BRIGHTNESSUP, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_BRIGHT },
 	{ DFR_GLYPH_PREV, KEY_PREVIOUSSONG, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_SKIP },
@@ -145,20 +196,202 @@ static const struct dfr_key dfr_keys_alt[] = {
 	{ DFR_GLYPH_VOLUP, KEY_VOLUMEUP, 1.0f, DFR_ACT_KEY, 0, DFR_IND_NONE, DFR_COL_VOL },
 };
 
-/* Command+Fn: AI and daily tools. VOICE calls Voxtype directly instead of
- * synthesizing F9, which makes a quick tap a reliable start/stop toggle. */
+/* ChatGPT/Codex deck. Each fixed helper focuses the desktop app before sending
+ * the shortcut, so this row behaves correctly whether focus selected it
+ * automatically or the user opened it from Home/another app deck. */
 static const struct dfr_key dfr_keys_meta[] = {
-	{ "BACK", 0, 1.2f, DFR_ACT_LAYER, "media", DFR_IND_NONE, DFR_COL_ESC },
-	{ "OPEN", 0, 1.2f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-open", DFR_IND_NONE, DFR_COL_CHATGPT },
-	{ "VOICE", 0, 1.4f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action dictation-toggle", DFR_IND_NONE, DFR_COL_VOICE },
-	{ "NEW", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-new", DFR_IND_NONE, DFR_COL_CHATGPT },
-	{ "CMD", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-command", DFR_IND_NONE, DFR_COL_CHATGPT },
-	{ "CLIP", 0, 1.15f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-clipboard", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "SHOT", 0, 1.15f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-capture", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "COPY", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-copy", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "PASTE", 0, 1.0f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action gpt-paste", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "TERM", 0, 1.15f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action terminal", DFR_IND_NONE, DFR_COL_ACTION },
-	{ "EMOJI", 0, 1.25f, DFR_ACT_CMD, "/run/t1-custom-bar/touchbar-action menu-emoji", DFR_IND_NONE, DFR_COL_ACTION },
+	DFR_KEY("ESC", KEY_ESC, 1.00f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.75f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER("CODEX", 1.20f, "meta", DFR_COL_CHATGPT),
+	DFR_COMMAND("NEW", 0.90f, "/run/t1-custom-bar/touchbar-action gpt-new", DFR_COL_CHATGPT),
+	DFR_COMMAND("CMD", 0.90f, "/run/t1-custom-bar/touchbar-action gpt-command", DFR_COL_CHATGPT),
+	DFR_COMMAND("FILES", 0.95f, "/run/t1-custom-bar/touchbar-action gpt-files", DFR_COL_SKIP),
+	DFR_COMMAND("OPEN", 0.90f, "/run/t1-custom-bar/touchbar-action gpt-open-file", DFR_COL_SKIP),
+	DFR_COMMAND("SIDE", 0.85f, "/run/t1-custom-bar/touchbar-action gpt-sidebar", DFR_COL_ACTION),
+	DFR_COMMAND("BOTTOM", 1.05f, "/run/t1-custom-bar/touchbar-action gpt-bottom", DFR_COL_ACTION),
+	DFR_COMMAND("TERM", 0.90f, "/run/t1-custom-bar/touchbar-action gpt-terminal", DFR_COL_STATUS),
+	DFR_COMMAND("REVIEW", 1.10f, "/run/t1-custom-bar/touchbar-action gpt-review", DFR_COL_BRIGHT),
+	DFR_COMMAND("WEB", 0.85f, "/run/t1-custom-bar/touchbar-action gpt-web", DFR_COL_SKIP),
+	DFR_COMMAND("VOICE", 1.05f, "/run/t1-custom-bar/touchbar-action gpt-voice", DFR_COL_VOICE),
+	DFR_COMMAND("DICTATE", 1.15f, "/run/t1-custom-bar/touchbar-action gpt-dictate", DFR_COL_VOICE),
+	DFR_LAYER("MEDIA", 1.00f, "alt", DFR_COL_VOL),
+};
+
+/* Automatic browser deck. The badge is deliberately a same-layer action: it
+ * acts as a stable visual title without launching anything if tapped. */
+static const struct dfr_key dfr_keys_browser[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.10f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.85f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_WEB " WEB", 1.35f, "browser", DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_BACK, KEY_LEFT, 0.85f, DFR_MOD_ALT, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_FORWARD, KEY_RIGHT, 0.85f, DFR_MOD_ALT, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_RELOAD, KEY_R, 0.85f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_HOTKEY("URL", KEY_L, 1.00f, DFR_MOD_CTRL, DFR_COL_CHATGPT),
+	DFR_HOTKEY("TAB-", KEY_TAB, 0.95f, DFR_MOD_CTRL | DFR_MOD_SHIFT, DFR_COL_ACTION),
+	DFR_HOTKEY("TAB+", KEY_TAB, 0.95f, DFR_MOD_CTRL, DFR_COL_ACTION),
+	DFR_HOTKEY(DFR_GLYPH_PLUS, KEY_T, 0.80f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_HOTKEY(DFR_GLYPH_CLOSE, KEY_W, 0.80f, DFR_MOD_CTRL, DFR_COL_ESC),
+	DFR_HOTKEY(DFR_GLYPH_SEARCH, KEY_F, 0.85f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_KEY(DFR_GLYPH_PLAYPAUSE, KEY_PLAYPAUSE, 0.85f, DFR_COL_PLAY),
+	DFR_LAYER("MEDIA", 1.15f, "alt", DFR_COL_VOL),
+};
+
+static const struct dfr_key dfr_keys_terminal[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.10f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.85f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_TERM " TERM", 1.45f, "terminal", DFR_COL_CHATGPT),
+	DFR_HOTKEY(DFR_GLYPH_COPY " COPY", KEY_C, 1.20f, DFR_MOD_CTRL | DFR_MOD_SHIFT, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_PASTE " PASTE", KEY_V, 1.25f, DFR_MOD_CTRL | DFR_MOD_SHIFT, DFR_COL_PLAY),
+	DFR_HOTKEY("INT", KEY_C, 0.90f, DFR_MOD_CTRL, DFR_COL_ESC),
+	DFR_HOTKEY("CLEAR", KEY_L, 1.05f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_HOTKEY(DFR_GLYPH_UP " PAGE", KEY_PAGEUP, 0.85f, DFR_MOD_SHIFT, DFR_COL_ACTION),
+	DFR_KEY(DFR_GLYPH_UP, KEY_UP, 0.70f, DFR_COL_SKIP),
+	DFR_KEY("DOWN", KEY_DOWN, 0.75f, DFR_COL_SKIP),
+	DFR_COMMAND("NEW", 1.00f, "/run/t1-custom-bar/touchbar-action terminal", DFR_COL_PLAY),
+	DFR_COMMAND("TMUX", 1.10f, "/run/t1-custom-bar/touchbar-action terminal-tmux", DFR_COL_STATUS),
+	DFR_LAYER("AI", 0.80f, "meta", DFR_COL_CHATGPT),
+	DFR_LAYER("MEDIA", 1.10f, "alt", DFR_COL_VOL),
+};
+
+static const struct dfr_key dfr_keys_code[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.05f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.80f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_CODE " CODE", 1.35f, "code", DFR_COL_CHATGPT),
+	DFR_HOTKEY(DFR_GLYPH_SAVE " SAVE", KEY_S, 1.10f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_HOTKEY(DFR_GLYPH_UNDO, KEY_Z, 0.75f, DFR_MOD_CTRL, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_REDO, KEY_Z, 0.75f, DFR_MOD_CTRL | DFR_MOD_SHIFT, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_SEARCH, KEY_F, 0.75f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_HOTKEY("REPLACE", KEY_H, 1.10f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_HOTKEY("CMD", KEY_P, 0.90f, DFR_MOD_CTRL | DFR_MOD_SHIFT, DFR_COL_ACTION),
+	DFR_HOTKEY("TERM", KEY_GRAVE, 0.95f, DFR_MOD_CTRL, DFR_COL_STATUS),
+	DFR_HOTKEY("FORMAT", KEY_F, 1.05f, DFR_MOD_ALT | DFR_MOD_SHIFT, DFR_COL_CHATGPT),
+	DFR_KEY("RUN", KEY_F5, 0.80f, DFR_COL_PLAY),
+	DFR_LAYER("AI", 0.75f, "meta", DFR_COL_CHATGPT),
+	DFR_LAYER("MEDIA", 1.05f, "alt", DFR_COL_VOL),
+};
+
+/* Omarchy's default Neovim/LazyVim deck. Multi-key leader mappings use only
+ * fixed, allowlisted sequences in touchbar-action; Save remains a native key. */
+static const struct dfr_key dfr_keys_nvim[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.00f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.75f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_CODE " NVIM", 1.25f, "nvim", DFR_COL_PLAY),
+	DFR_COMMAND("FILES", 0.95f, "/run/t1-custom-bar/touchbar-action nvim-files", DFR_COL_SKIP),
+	DFR_COMMAND("GREP", 0.90f, "/run/t1-custom-bar/touchbar-action nvim-grep", DFR_COL_BRIGHT),
+	DFR_COMMAND("TREE", 0.90f, "/run/t1-custom-bar/touchbar-action nvim-tree", DFR_COL_SKIP),
+	DFR_COMMAND("GIT", 0.80f, "/run/t1-custom-bar/touchbar-action nvim-git", DFR_COL_OMARCHY),
+	DFR_HOTKEY(DFR_GLYPH_SAVE, KEY_S, 0.70f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_COMMAND("FORMAT", 1.00f, "/run/t1-custom-bar/touchbar-action nvim-format", DFR_COL_PLAY),
+	DFR_COMMAND("DIAG", 0.85f, "/run/t1-custom-bar/touchbar-action nvim-diag", DFR_COL_ESC),
+	DFR_COMMAND("TERM", 0.85f, "/run/t1-custom-bar/touchbar-action nvim-terminal", DFR_COL_STATUS),
+	DFR_COMMAND("NEW", 0.75f, "/run/t1-custom-bar/touchbar-action nvim-new", DFR_COL_CHATGPT),
+	DFR_COMMAND("BUFS", 0.80f, "/run/t1-custom-bar/touchbar-action nvim-buffers", DFR_COL_ACTION),
+	DFR_LAYER("AI", 0.70f, "meta", DFR_COL_CHATGPT),
+	DFR_LAYER("MEDIA", 0.95f, "alt", DFR_COL_VOL),
+};
+
+static const struct dfr_key dfr_keys_files[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.05f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.80f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_FOLDER " FILES", 1.45f, "files", DFR_COL_BRIGHT),
+	DFR_HOTKEY(DFR_GLYPH_BACK, KEY_LEFT, 0.80f, DFR_MOD_ALT, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_FORWARD, KEY_RIGHT, 0.80f, DFR_MOD_ALT, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_UP, KEY_UP, 0.80f, DFR_MOD_ALT, DFR_COL_STATUS),
+	DFR_HOTKEY("HOME", KEY_HOME, 0.95f, DFR_MOD_ALT, DFR_COL_OMARCHY),
+	DFR_HOTKEY(DFR_GLYPH_SEARCH, KEY_F, 0.80f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_HOTKEY("PATH", KEY_L, 0.90f, DFR_MOD_CTRL, DFR_COL_STATUS),
+	DFR_HOTKEY(DFR_GLYPH_PLUS " DIR", KEY_N, 1.00f, DFR_MOD_CTRL | DFR_MOD_SHIFT, DFR_COL_PLAY),
+	DFR_KEY("RENAME", KEY_F2, 1.00f, DFR_COL_ACTION),
+	DFR_HOTKEY("HIDDEN", KEY_H, 1.05f, DFR_MOD_CTRL, DFR_COL_ACTION),
+	DFR_HOTKEY(DFR_GLYPH_COPY, KEY_C, 0.75f, DFR_MOD_CTRL, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_PASTE, KEY_V, 0.75f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_COMMAND("TERM", 0.95f, "/run/t1-custom-bar/touchbar-action terminal", DFR_COL_STATUS),
+	DFR_LAYER("MEDIA", 1.05f, "alt", DFR_COL_VOL),
+};
+
+static const struct dfr_key dfr_keys_comms[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.05f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.80f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_CHAT " CHAT", 1.40f, "comms", DFR_COL_VOICE),
+	DFR_HOTKEY("NEW", KEY_N, 0.95f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_HOTKEY(DFR_GLYPH_SEARCH, KEY_F, 0.85f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_HOTKEY(DFR_GLYPH_UNDO, KEY_Z, 0.75f, DFR_MOD_CTRL, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_COPY, KEY_C, 0.75f, DFR_MOD_CTRL, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_PASTE, KEY_V, 0.75f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_COMMAND("DICTATE", 1.20f, "/run/t1-custom-bar/touchbar-action dictation-toggle", DFR_COL_VOICE),
+	DFR_COMMAND("EMOJI", 1.05f, "/run/t1-custom-bar/touchbar-action menu-emoji", DFR_COL_ACTION),
+	DFR_COMMAND("SHOT", 0.95f, "/run/t1-custom-bar/touchbar-action menu-capture", DFR_COL_CHATGPT),
+	DFR_LAYER("AI", 0.75f, "meta", DFR_COL_CHATGPT),
+	DFR_LAYER("MEDIA", 1.05f, "alt", DFR_COL_VOL),
+};
+
+static const struct dfr_key dfr_keys_document[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.05f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.80f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_DOC " DOC", 1.30f, "document", DFR_COL_BRIGHT),
+	DFR_HOTKEY(DFR_GLYPH_SAVE, KEY_S, 0.80f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_HOTKEY(DFR_GLYPH_UNDO, KEY_Z, 0.75f, DFR_MOD_CTRL, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_REDO, KEY_Z, 0.75f, DFR_MOD_CTRL | DFR_MOD_SHIFT, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_SEARCH, KEY_F, 0.75f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_HOTKEY("BOLD", KEY_B, 0.90f, DFR_MOD_CTRL, DFR_COL_TEXT),
+	DFR_HOTKEY("ITALIC", KEY_I, 0.95f, DFR_MOD_CTRL, DFR_COL_TEXT),
+	DFR_HOTKEY("ZOOM-", KEY_MINUS, 0.95f, DFR_MOD_CTRL, DFR_COL_STATUS),
+	DFR_HOTKEY("ZOOM+", KEY_EQUAL, 0.95f, DFR_MOD_CTRL, DFR_COL_STATUS),
+	DFR_HOTKEY("PRINT", KEY_P, 0.95f, DFR_MOD_CTRL, DFR_COL_ACTION),
+	DFR_COMMAND(DFR_GLYPH_FULLSCREEN, 0.75f, "/run/t1-custom-bar/touchbar-action fullscreen", DFR_COL_CHATGPT),
+	DFR_LAYER("AI", 0.75f, "meta", DFR_COL_CHATGPT),
+	DFR_LAYER("MEDIA", 1.00f, "alt", DFR_COL_VOL),
+};
+
+static const struct dfr_key dfr_keys_reader[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.00f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.75f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_READ " READ", 1.25f, "reader", DFR_COL_BRIGHT),
+	DFR_KEY("PAGE-", KEY_PAGEUP, 1.00f, DFR_COL_SKIP),
+	DFR_KEY("PAGE+", KEY_PAGEDOWN, 1.00f, DFR_COL_SKIP),
+	DFR_KEY("FIRST", KEY_HOME, 0.90f, DFR_COL_STATUS),
+	DFR_KEY("LAST", KEY_END, 0.85f, DFR_COL_STATUS),
+	DFR_HOTKEY(DFR_GLYPH_SEARCH, KEY_F, 0.75f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_HOTKEY("ZOOM-", KEY_MINUS, 0.90f, DFR_MOD_CTRL, DFR_COL_STATUS),
+	DFR_HOTKEY("ZOOM+", KEY_EQUAL, 0.90f, DFR_MOD_CTRL, DFR_COL_STATUS),
+	DFR_HOTKEY("PRINT", KEY_P, 0.85f, DFR_MOD_CTRL, DFR_COL_ACTION),
+	DFR_COMMAND(DFR_GLYPH_FULLSCREEN, 0.70f, "/run/t1-custom-bar/touchbar-action fullscreen", DFR_COL_CHATGPT),
+	DFR_LAYER("AI", 0.70f, "meta", DFR_COL_CHATGPT),
+	DFR_LAYER("MEDIA", 0.95f, "alt", DFR_COL_VOL),
+};
+
+static const struct dfr_key dfr_keys_music[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.05f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.80f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_MUSIC " NOW", 1.45f, "music", DFR_COL_VOICE),
+	DFR_KEY(DFR_GLYPH_PREV, KEY_PREVIOUSSONG, 1.10f, DFR_COL_SKIP),
+	DFR_KEY(DFR_GLYPH_PLAYPAUSE, KEY_PLAYPAUSE, 1.35f, DFR_COL_PLAY),
+	DFR_KEY(DFR_GLYPH_NEXT, KEY_NEXTSONG, 1.10f, DFR_COL_SKIP),
+	DFR_KEY(DFR_GLYPH_MUTE, KEY_MUTE, 0.95f, DFR_COL_MUTE),
+	DFR_KEY(DFR_GLYPH_VOLDOWN, KEY_VOLUMEDOWN, 1.05f, DFR_COL_VOL),
+	DFR_KEY(DFR_GLYPH_VOLUP, KEY_VOLUMEUP, 1.05f, DFR_COL_VOL),
+	DFR_KEY(DFR_GLYPH_BRDOWN, KEY_BRIGHTNESSDOWN, 0.95f, DFR_COL_BRIGHT),
+	DFR_KEY(DFR_GLYPH_BRUP, KEY_BRIGHTNESSUP, 0.95f, DFR_COL_BRIGHT),
+	DFR_COMMAND("DICTATE", 1.20f, "/run/t1-custom-bar/touchbar-action dictation-toggle", DFR_COL_VOICE),
+};
+
+static const struct dfr_key dfr_keys_universal[] = {
+	DFR_KEY("ESC", KEY_ESC, 1.05f, DFR_COL_ESC),
+	DFR_LAYER(DFR_GLYPH_HOME, 0.80f, "media", DFR_COL_OMARCHY),
+	DFR_LAYER(DFR_GLYPH_APP " APP", 1.30f, "universal", DFR_COL_CHATGPT),
+	DFR_HOTKEY(DFR_GLYPH_UNDO, KEY_Z, 0.75f, DFR_MOD_CTRL, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_REDO, KEY_Z, 0.75f, DFR_MOD_CTRL | DFR_MOD_SHIFT, DFR_COL_SKIP),
+	DFR_HOTKEY("CUT", KEY_X, 0.80f, DFR_MOD_CTRL, DFR_COL_ESC),
+	DFR_HOTKEY(DFR_GLYPH_COPY, KEY_C, 0.75f, DFR_MOD_CTRL, DFR_COL_SKIP),
+	DFR_HOTKEY(DFR_GLYPH_PASTE, KEY_V, 0.75f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_HOTKEY(DFR_GLYPH_SEARCH, KEY_F, 0.75f, DFR_MOD_CTRL, DFR_COL_BRIGHT),
+	DFR_HOTKEY(DFR_GLYPH_SAVE, KEY_S, 0.75f, DFR_MOD_CTRL, DFR_COL_PLAY),
+	DFR_COMMAND(DFR_GLYPH_FULLSCREEN, 0.75f, "/run/t1-custom-bar/touchbar-action fullscreen", DFR_COL_CHATGPT),
+	DFR_COMMAND("SHOT", 0.80f, "/run/t1-custom-bar/touchbar-action menu-capture", DFR_COL_ACTION),
+	DFR_COMMAND(DFR_GLYPH_MIC, 0.65f, "/run/t1-custom-bar/touchbar-action dictation-toggle", DFR_COL_VOICE),
+	DFR_LAYER("AI", 0.75f, "meta", DFR_COL_CHATGPT),
+	DFR_LAYER("MEDIA", 1.00f, "alt", DFR_COL_VOL),
+	DFR_COMMAND("OM", 0.75f, "/run/t1-custom-bar/touchbar-action menu-root", DFR_COL_OMARCHY),
 };
 
 static const struct dfr_layout dfr_layouts[] = {
@@ -167,6 +400,16 @@ static const struct dfr_layout dfr_layouts[] = {
 	{ "ctrl", dfr_keys_ctrl, (int)(sizeof(dfr_keys_ctrl) / sizeof(dfr_keys_ctrl[0])) },
 	{ "alt", dfr_keys_alt, (int)(sizeof(dfr_keys_alt) / sizeof(dfr_keys_alt[0])) },
 	{ "meta", dfr_keys_meta, (int)(sizeof(dfr_keys_meta) / sizeof(dfr_keys_meta[0])) },
+	{ "browser", dfr_keys_browser, (int)(sizeof(dfr_keys_browser) / sizeof(dfr_keys_browser[0])) },
+	{ "terminal", dfr_keys_terminal, (int)(sizeof(dfr_keys_terminal) / sizeof(dfr_keys_terminal[0])) },
+	{ "code", dfr_keys_code, (int)(sizeof(dfr_keys_code) / sizeof(dfr_keys_code[0])) },
+	{ "nvim", dfr_keys_nvim, (int)(sizeof(dfr_keys_nvim) / sizeof(dfr_keys_nvim[0])) },
+	{ "files", dfr_keys_files, (int)(sizeof(dfr_keys_files) / sizeof(dfr_keys_files[0])) },
+	{ "comms", dfr_keys_comms, (int)(sizeof(dfr_keys_comms) / sizeof(dfr_keys_comms[0])) },
+	{ "document", dfr_keys_document, (int)(sizeof(dfr_keys_document) / sizeof(dfr_keys_document[0])) },
+	{ "reader", dfr_keys_reader, (int)(sizeof(dfr_keys_reader) / sizeof(dfr_keys_reader[0])) },
+	{ "music", dfr_keys_music, (int)(sizeof(dfr_keys_music) / sizeof(dfr_keys_music[0])) },
+	{ "universal", dfr_keys_universal, (int)(sizeof(dfr_keys_universal) / sizeof(dfr_keys_universal[0])) },
 };
 #define DFR_NLAYOUTS ((int)(sizeof(dfr_layouts) / sizeof(dfr_layouts[0])))
 
