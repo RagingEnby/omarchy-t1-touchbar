@@ -173,6 +173,12 @@ sudo ./scripts/install-custom-bar-service.sh
 This enables both boot persistence and a post-resume relight unit for lid-close
 suspend and hibernation.
 
+The persistent renderer uses a black-pixel OLED policy: after two minutes
+without keyboard, Touch Bar, or app-context activity it submits one black frame
+and stops indicator refreshes. The first touch only wakes the strip; it cannot
+activate an invisible button. Normal keyboard or context activity wakes the
+current layout immediately.
+
 Rollback to Apple's firmware-rendered strip with:
 
 ```bash

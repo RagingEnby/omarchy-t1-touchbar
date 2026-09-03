@@ -187,8 +187,12 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
   deep S3 leaves the OLED black until a reboot. Before `s2idle`, the service
   parks the T1 in Apple firmware configuration 1 so the patched stock driver
   can suspend and relight the OLED; after wake, one serialized action returns
-  it to the programmable layout. A physical-lid watcher provides the same
-  protection when no systemd sleep transaction occurs.
+  it to the programmable layout. A physical-lid watcher owns the low-level lid
+  switch and issues one suspend per real close, avoiding logind's 30-second
+  re-suspend when Apple ACPI misses the matching open event. The custom OLED
+  also uses a true-black low-power palette and blanks after two idle minutes;
+  keyboard, app-context, or first-touch activity restores it without firing a
+  hidden action.
   The installer also protects the MacBookPro13,2 Alpine Ridge PCI trees from
   the long resume timeout and forces its BCM43602 driver during early boot.
   The persistent service remains opt-in and includes a one-command

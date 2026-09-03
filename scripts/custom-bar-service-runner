@@ -74,6 +74,8 @@ restore_firmware_bar() {
     driver=$(basename "$(readlink -f "$hid_path/driver" 2>/dev/null)" 2>/dev/null || true)
     [[ $driver == hid-sensor-hub ]] || continue
     hid=${hid_path##*/}
+    [[ -w /sys/bus/hid/drivers/hid-sensor-hub/unbind ]] || continue
+    [[ -w /sys/bus/hid/drivers/apple-ibridge-hid/bind ]] || continue
     printf '%s\n' "$hid" > /sys/bus/hid/drivers/hid-sensor-hub/unbind
     printf '%s\n' "$hid" > /sys/bus/hid/drivers/apple-ibridge-hid/bind
   done

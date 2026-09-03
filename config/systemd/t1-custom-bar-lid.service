@@ -7,7 +7,10 @@ ConditionPathExists=/proc/acpi/button/lid/LID0/state
 
 [Service]
 Type=simple
-ExecStart=/usr/local/lib/omarchy-t1-touchbar/t1-lid-watcher
+# Own lid-close policy while this service is healthy.  The low-level inhibitor
+# prevents logind's stale Apple ACPI lid state from scheduling a second suspend
+# 30 seconds after a successful wake.
+ExecStart=/usr/bin/systemd-inhibit --what=handle-lid-switch --who=omarchy-t1-touchbar --why=Reliable-transition-based-MacBook-lid-handling --mode=block /usr/local/lib/omarchy-t1-touchbar/t1-lid-watcher
 Restart=on-failure
 RestartPreventExitStatus=78
 RestartSec=2

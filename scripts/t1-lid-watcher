@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
-# Park the programmable strip in firmware mode as soon as the lid closes, then
-# restore it after reopen.  This is also a safety net for stay-awake sessions,
-# where no systemd suspend/resume target is reached.
+# Own the physical lid transition while holding logind's low-level lid-switch
+# inhibitor.  Apple ACPI occasionally wakes this model without publishing a
+# matching "lid opened" event; logind then sees its stale closed state and
+# suspends the already-awake machine again after its 30-second holdoff.  A
+# transition-driven watcher issues exactly one suspend for each real close.
+#
+# The programmable strip is parked in firmware mode first, so both the T1 OLED
+# and its virtual function keys cross sleep through the proven driver path.
 set -euo pipefail
 
 lid_state=/proc/acpi/button/lid/LID0/state
@@ -12,22 +17,46 @@ lid_state=/proc/acpi/button/lid/LID0/state
 }
 
 read_lid() {
-  awk '{ print $2 }' "$lid_state"
+  local label state
+  read -r label state < "$lid_state"
+  printf '%s\n' "$state"
 }
 
 previous=$(read_lid)
 printf 'T1 lid watcher: initial state=%s\n' "$previous"
 
-while sleep 0.25; do
+# Keep one timer child instead of forking `sleep` on every poll. Bash's timed
+# read and read_lid are both built-ins, so the always-on watcher is effectively
+# idle between checks.
+exec 8< <(sleep infinity)
+while :; do
+  read -r -t 0.5 -u 8 _ || true
   current=$(read_lid)
   if [[ $previous == open && $current == closed ]]; then
-    printf 'T1 lid watcher: closed; parking in firmware mode\n'
+    printf 'T1 lid watcher: closed; parking in firmware mode before one suspend\n'
     if systemctl is-active --quiet t1-custom-bar-live.service; then
       if systemctl stop t1-custom-bar-live.service; then
         touch /run/t1-custom-bar-sleep-stopped
       else
         printf 'T1 lid watcher: failed to park programmable bar\n' >&2
       fi
+    fi
+    # Debounce lid jitter after the USB configuration switch.  Do not suspend
+    # if the user reopened the panel while the firmware bar was settling.
+    sleep 0.5
+    current=$(read_lid)
+    if [[ $current == closed ]]; then
+      printf 'T1 lid watcher: entering suspend\n'
+      if systemctl suspend; then
+        printf 'T1 lid watcher: resumed; scheduling custom mode\n'
+        /usr/local/lib/omarchy-t1-touchbar/t1-custom-bar-recover 2 &
+      else
+        printf 'T1 lid watcher: suspend transaction failed\n' >&2
+        /usr/local/lib/omarchy-t1-touchbar/t1-custom-bar-recover 0 &
+      fi
+    else
+      printf 'T1 lid watcher: close was cancelled; restoring custom mode\n'
+      /usr/local/lib/omarchy-t1-touchbar/t1-custom-bar-recover 0 &
     fi
   elif [[ $previous == closed && $current == open ]]; then
     printf 'T1 lid watcher: reopened; scheduling custom mode\n'

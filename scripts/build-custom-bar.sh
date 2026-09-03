@@ -42,7 +42,8 @@ for patch_file in \
   "$repo_root/custom-bar/patches/dfr-layer-actions.patch" \
   "$repo_root/custom-bar/patches/dfr-workspace-occupancy.patch" \
   "$repo_root/custom-bar/patches/dfr-workspace-drag.patch" \
-  "$repo_root/custom-bar/patches/dfr-context-engine.patch"; do
+  "$repo_root/custom-bar/patches/dfr-context-engine.patch" \
+  "$repo_root/custom-bar/patches/dfr-oled-efficiency.patch"; do
   if ! git -C "$source_root" apply --check "$patch_file"; then
     printf 'ERROR: custom patch no longer applies cleanly: %s\n' "$patch_file" >&2
     exit 1

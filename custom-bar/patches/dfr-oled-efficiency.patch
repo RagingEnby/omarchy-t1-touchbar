@@ -1,0 +1,158 @@
+--- a/touch-bar/dfrd/dfr-render.c
++++ b/touch-bar/dfrd/dfr-render.c
+@@ -71,12 +71,14 @@
+ #define FRAME_RESPONSE_WAIT_MS 250
+ #define DFR_COMMITTED_PATH "/run/t1-custom-bar/layout.committed"
+ #define DFR_PENDING_PATH "/run/t1-custom-bar/layout.pending"
++#define DFR_OLED_BLANK_PATH "/run/t1-custom-bar/oled.blank"
+ #define DFR_FRAME_SEQUENCE_ATTR "successful_frame_sequence"
++#define OLED_IDLE_MS (2 * 60 * 1000)
+ 
+ /* colors (XRGB8888) */
+-#define COL_BG        0xFF0E0E14u /* Tokyo Night darker */
+-#define COL_SURFACE   0xFF24283Bu
+-#define COL_SELECTION 0xFF292E42u
++#define COL_BG        0xFF000000u /* OLED black: unlit pixels draw no panel power */
++#define COL_SURFACE   0xFF080A0Fu
++#define COL_SELECTION 0xFF111522u
+ #define COL_FG        0xFFC0CAF5u
+ #define COL_MUTED     0xFF414868u
+ #define COL_ACCENT    0xFF7AA2F7u
+@@ -87,13 +89,14 @@
+ #define FONT_PX_MAX 30
+ #define FONT_PX_MIN 10
+ 
+-#define IND_REFRESH_MS 400       /* occupied-workspace refresh interval */
+-#define STATUS_REFRESH_MS 2500   /* battery/network/hardware interval */
++#define IND_REFRESH_MS 750       /* occupied-workspace refresh interval */
++#define STATUS_REFRESH_MS 5000   /* battery/network/hardware interval */
+ 
+-static volatile sig_atomic_t g_stop, g_cycle, g_setlayout = -1;
++static volatile sig_atomic_t g_stop, g_cycle, g_activity, g_setlayout = -1;
+ static void on_stop(int s)  { (void)s; g_stop = 1; }
+-static void on_usr1(int s)  { (void)s; g_cycle = 1; }
+-static void on_rt(int s)    { g_setlayout = s - SIGRTMIN; }  /* SIGRTMIN+i -> set layout i */
++static void on_usr1(int s)  { (void)s; g_cycle = 1; g_activity = 1; }
++static void on_usr2(int s)  { (void)s; g_activity = 1; }
++static void on_rt(int s)    { g_setlayout = s - SIGRTMIN; g_activity = 1; }  /* SIGRTMIN+i -> set layout i */
+ static int64_t now_ms(void);
+ 
+ /* Signal handlers only store sig_atomic_t values. Block every layout signal
+@@ -1006,6 +1009,7 @@
+ 	signal(SIGINT, on_stop);
+ 	signal(SIGTERM, on_stop);
+ 	signal(SIGUSR1, on_usr1);
++	signal(SIGUSR2, on_usr2);
+ 	for (int i = 0; i < DFR_NLAYOUTS && SIGRTMIN + i <= SIGRTMAX; i++)
+ 		signal(SIGRTMIN + i, on_rt);
+ 	sigset_t layout_signals;
+@@ -1205,10 +1209,22 @@
+ 	printf("\nSIGUSR1 requests the next layout; Ctrl-C / SIGTERM exits.\n");
+ 
+ 	int64_t next_ind = 0;   /* refresh immediately on first indicator layout */
+-	int64_t redraw_at = 0, last_push = now_ms();
++	int64_t redraw_at = 0, last_push = now_ms(), last_activity = now_ms();
+ 	int redraw_pending = 0;
+ 	int layout_commit_pending = 0;
++	int oled_blank = 0;
++	unlink(DFR_OLED_BLANK_PATH);
+ 	while (!g_stop) {
++		if (g_activity) {
++			g_activity = 0;
++			last_activity = now_ms();
++			if (oled_blank) {
++				oled_blank = 0;
++				unlink(DFR_OLED_BLANK_PATH);
++				redraw_pending = 1;
++				redraw_at = last_activity;
++			}
++		}
+ 		int idx = -1;
+ 		if (take_layout_request(&layout_signals, layout_idx, &idx) < 0) {
+ 			fprintf(stderr, "layout signal synchronization: %s\n",
+@@ -1227,12 +1243,27 @@
+ 				fflush(stdout);
+ 			}
+ 		}
+-		if (dfr_layout_has_indicators(layout) && now_ms() >= next_ind) {
++		if (!oled_blank && dfr_layout_has_indicators(layout) && now_ms() >= next_ind) {
+ 			if (ind_refresh())
+ 				redraw_pending = 1;
+ 			next_ind = now_ms() + IND_REFRESH_MS;
+ 		}
+ 		int64_t t = now_ms();
++		if (!oled_blank && t - last_activity >= OLED_IDLE_MS) {
++			uint64_t before = 0;
++			if (read_frame_sequence(frame_sequence_pathname, &before) == 0) {
++				fill_phys(0, 0, g_long, g_short, 0xFF000000u);
++				if (drmModeDirtyFB(fd, fb_id, NULL, 0) == 0 &&
++				    wait_frame_advance(frame_sequence_pathname, before) == 0) {
++					int marker = open(DFR_OLED_BLANK_PATH,
++						O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
++					if (marker >= 0)
++						close(marker);
++					oled_blank = 1;
++					redraw_pending = 0;
++				}
++			}
++		}
+ 		if (redraw_pending && t >= redraw_at &&
+ 		    t - last_push >= FRAME_INTERVAL_MS) {
+ 			int can_submit = 1;
+@@ -1279,7 +1310,7 @@
+ 			}
+ 			last_push = now_ms();
+ 		}
+-		usleep(30000);
++		usleep(75000);
+ 	}
+ 
+ 	/* teardown */
+@@ -1298,6 +1329,7 @@
+ 	if (!pending_fence_armed && clear_pending_layout() < 0)
+ 		fprintf(stderr, "warning: clear pending-layout fence on exit: %s\n",
+ 			strerror(errno));
++	unlink(DFR_OLED_BLANK_PATH);
+ 	printf("clean exit.\n");
+ 	return 0;
+ }
+--- a/touch-bar/dfrd/dfr-fnd.c
++++ b/touch-bar/dfrd/dfr-fnd.c
+@@ -137,6 +137,10 @@
+ 	struct input_event ev;
+ 	while (read(fd, &ev, sizeof ev) == (ssize_t)sizeof ev) {
+ 		if (ev.type != EV_KEY || ev.value == 2 /* autorepeat */) continue;
++		/* Any real keyboard edge wakes the low-power OLED before the key is
++		 * acted on. The renderer is always the first pid supplied by dfrd. */
++		if (!verbose && npids > 0)
++			kill(pids[0], SIGUSR2);
+ 
+ 		/* track modifier state */
+ 		switch (ev.code) {
+--- a/touch-bar/dfrd/dfr-touchd.c
++++ b/touch-bar/dfrd/dfr-touchd.c
+@@ -70,6 +70,7 @@
+ #define LAUNCH_DEBOUNCE_MS 160 /* fast taps without duplicate command launches */
+ #define LAYOUT_SYNC_MS 50
+ #define DFR_COMMITTED_PATH "/run/t1-custom-bar/layout.committed"
++#define DFR_OLED_BLANK_PATH "/run/t1-custom-bar/oled.blank"
+ #define DFR_PENDING_PATH "/run/t1-custom-bar/layout.pending"
+ 
+ static volatile sig_atomic_t g_stop, g_layout_wake = 1;
+@@ -632,6 +633,16 @@
+ 				dev, strerror(errno));
+ 			break;
+ 		}
++		/* A black strip has no visible hit map. Consume the whole first
++		 * contact as a wake gesture so an invisible button cannot fire. */
++		if (!dry_run && access(DFR_OLED_BLANK_PATH, F_OK) == 0) {
++			if (g_renderer_pid > 0)
++				kill(g_renderer_pid, SIGUSR2);
++			suppressed_contact = 1;
++			continue;
++		}
++		if (!dry_run && g_renderer_pid > 0)
++			kill(g_renderer_pid, SIGUSR2);
+ 		if (!logged_size) {
+ 			logged_size = 1;
+ 			printf("first report: %zd bytes (expect ~52)\n", n);
