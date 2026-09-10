@@ -145,7 +145,7 @@ assert_context_layout browser chromium 'Signal Processing Handbook'
 
 layouts=(
   fn media ctrl alt meta browser terminal code nvim files comms document reader
-  music universal
+  music universal capture
 )
 for layout in "${layouts[@]}"; do
   "$dfrd_root/dfr-render" -l "$layout" --preview "$preview_root/$layout.ppm"

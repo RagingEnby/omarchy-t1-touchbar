@@ -13,12 +13,15 @@ to USB configuration 2, unload a driver, install a service, or reboot.
 ## Prism Deck
 
 The bar is an Omarchy-native, focus-aware control surface. A small local daemon
-listens to Hyprland's active-window socket and selects a reviewed layout for the
-focused application. It reads only the app class and window-title metadata in
-memory; it never captures page or document bodies, sends window data off the
-machine, logs titles, or turns titles into commands.
+listens to Hyprland's active-window socket and records which reviewed layout
+matches the focused application in a per-user hint file; it never switches the
+bar by itself. The APPS button on the Home row exposes that deck on demand and
+tapping APPS again returns Home, so app controls appear only when wanted. The
+daemon reads only the app class and window-title metadata in memory; it never
+captures page or document bodies, sends window data off the machine, logs
+titles, or turns titles into commands.
 
-| Focused app family | Automatic deck | Primary controls |
+| Focused app family | On-demand deck | Primary controls |
 |---|---|---|
 | ChatGPT / Codex desktop app | `meta` | New, command search, files, panels, terminal, review, web, voice and dictation |
 | Chromium / Firefox / Brave / Zen | `browser` | Back, forward, reload, URL, tab navigation, new/close tab, find and media |
@@ -32,11 +35,19 @@ machine, logs titles, or turns titles into commands.
 | mpv / VLC / Spotify / YouTube | `music` | Playback, mute, volume, brightness and dictation |
 | Everything else | `universal` | Edit, save, find, fullscreen, capture, dictation, AI, media and Omarchy |
 
-Every automatic deck keeps `ESC` at the far left, a one-tap Home button, an
-app-family identity pill, and a route to Media. The Home button opens the
-workspace deck and leaves it in place until focus changes again. Specific web
-apps are classified before the generic browser, so a Discord or YouTube window
-gets communications or media controls rather than ordinary tab controls.
+Every app deck keeps `ESC` at the far left, a one-tap Home button, an
+app-family identity pill, and a route to Media. Specific web apps are
+classified before the generic browser, so a Discord or YouTube window gets
+communications or media controls rather than ordinary tab controls.
+
+The Home row carries ESC, the ten workspace pills, and one-tap quick actions:
+APPS exposes the focused application's deck (its tint previews which deck is
+on offer), SHOT takes a region screenshot, REC toggles a screen recording and
+turns into a red stop pill with a live elapsed timer while recording, GPT
+opens the AI deck, MEDIA the brightness/transport row, OM the Omarchy menu and
+MIC toggles dictation. A dedicated capture deck (from the system row or the
+capture layout) gathers window/fullscreen screenshots, OCR text capture and
+fullscreen recording.
 
 The renderer, kernel driver and touch mapper share a fail-closed layout
 transaction fence. The driver's read-only sequence advances only after a full
@@ -48,12 +59,13 @@ only after all fingers are lifted. This is USB transaction fencing, not panel
 pixel readback, so it prevents unresolved frames from enabling a different hit
 map without pretending that Linux can inspect the OLED's physical pixels.
 
-The Tokyo Night Prism design uses rounded neutral pills, restrained theme
-accents and a fine color rail instead of full-button rainbow fills. On the Home
-deck, empty workspaces use muted numerals, occupied workspaces gain a cyan dot,
-and the current workspace becomes a bright blue selected pill. The renderer
-polls local Hyprland workspace state every 400 ms and redraws only when it
-changes.
+The Tokyo Night Prism design draws gradient pills with soft accent halos,
+gloss highlights and restrained theme rails instead of full-button rainbow
+fills. On the Home deck, empty workspaces use muted numerals, occupied
+workspaces gain a cyan dot, and the current workspace becomes a bright cyan
+selected pill. Deck identity pills fill with the deck accent, and icon-plus-
+label keys pair a larger glyph with a smaller word. The renderer polls local
+Hyprland workspace state and redraws only when something changes.
 
 Workspace zones also accept a horizontal drag. A tap opens that workspace;
 dragging a number onto a different number moves every non-pinned window from

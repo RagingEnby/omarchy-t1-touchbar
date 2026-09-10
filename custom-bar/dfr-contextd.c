@@ -1,11 +1,13 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Automatic application context for the Omarchy T1 Touch Bar.
+ * Application context for the Omarchy T1 Touch Bar.
  *
  * The daemon listens to Hyprland's event socket, maps the focused application
- * to one of the finite layouts in dfr-layout.h, and asks dfr-render to paint
- * that layout with a real-time signal. Window metadata is used only in memory:
- * titles are never logged, launched, or interpolated into a command.
+ * to one of the finite layouts in dfr-layout.h, and records that deck name in
+ * a per-user hint file. The renderer never switches decks automatically: the
+ * APPS button on the home row reads the hint and exposes the matching deck
+ * on demand. Window metadata is used only in memory: titles are never logged,
+ * launched, or interpolated into a command.
  */
 #define _GNU_SOURCE
 #define _POSIX_C_SOURCE 200809L
@@ -23,7 +25,6 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
-#include <sys/syscall.h>
 #include <sys/types.h>
 #include <sys/un.h>
 #include <unistd.h>
@@ -38,7 +39,6 @@
 #pragma GCC diagnostic pop
 #endif
 
-#define DFR_RENDER_EXE "/run/t1-custom-bar/dfr-render"
 #define EVENT_BUFFER_SIZE 65536u
 #define JSON_BUFFER_SIZE 65536u
 #define MAX_SOCKET_CANDIDATES 64u
@@ -453,130 +453,53 @@ static int query_active_window(const char *command_socket, char *window_class,
 	return 0;
 }
 
-static int renderer_catches_signal(pid_t process_id, int signal_number)
+/* Per-user hint file shared with the renderer. The renderer resolves it
+ * relative to the same runtime directory so the two sides agree even if the
+ * daemon is started from a minimal environment. */
+static int appdeck_hint_path(char *destination, size_t destination_size)
 {
-	if (signal_number < 1 || signal_number > 64)
-		return 0;
-
-	char status_path[64];
-	int written = snprintf(status_path, sizeof status_path, "/proc/%ld/status",
-			       (long)process_id);
-	if (written < 0 || (size_t)written >= sizeof status_path)
-		return 0;
-
-	FILE *status = fopen(status_path, "r");
-	if (!status)
-		return 0;
-
-	char line[256];
-	int caught = 0;
-	while (fgets(line, sizeof line, status)) {
-		if (strncmp(line, "SigCgt:", 7) != 0)
-			continue;
-		char *hex = line + 7;
-		while (isspace((unsigned char)*hex))
-			hex++;
-		errno = 0;
-		unsigned long long mask = strtoull(hex, NULL, 16);
-		if (!errno)
-			caught = (mask & (1ULL << (signal_number - 1))) != 0;
-		break;
+	const char *runtime = getenv("XDG_RUNTIME_DIR");
+	if (runtime && runtime[0] == '/' && getuid() != 0) {
+		int written = snprintf(destination, destination_size, "%s/t1-touchbar-app-deck",
+				       runtime);
+		if (written >= 0 && (size_t)written < destination_size)
+			return 0;
 	}
-	fclose(status);
-	return caught;
+	int written = snprintf(destination, destination_size, "/run/user/%d/t1-touchbar-app-deck",
+			       getuid());
+	return written >= 0 && (size_t)written < destination_size ? 0 : -1;
 }
 
-static int open_ready_renderer(int signal_number, pid_t *process_out)
+/* Atomically publish the deck matching the focused window. Only a change is
+ * written, so the file's existence never forces the renderer anywhere. */
+static int write_appdeck_hint(const char *window_class, const char *window_title)
 {
-	DIR *processes = opendir("/proc");
-	if (!processes)
+	static char last_hint[32];
+	const char *layout_name = layout_for_window(window_class, window_title);
+	if (!layout_name || dfr_layout_index(layout_name) < 0)
 		return -1;
-
-	int result = -1;
-	struct dirent *entry;
-	while ((entry = readdir(processes)) != NULL) {
-		if (!decimal_name(entry->d_name))
-			continue;
-
-		char executable_link[PATH_MAX];
-		int written = snprintf(executable_link, sizeof executable_link,
-				       "/proc/%s/exe", entry->d_name);
-		if (written < 0 || (size_t)written >= sizeof executable_link)
-			continue;
-
-		char executable[PATH_MAX];
-		ssize_t length = readlink(executable_link, executable,
-					  sizeof executable - 1);
-		if (length < 0)
-			continue;
-		executable[length] = 0;
-		if (strcmp(executable, DFR_RENDER_EXE) != 0)
-			continue;
-
-		errno = 0;
-		char *end = NULL;
-		long numeric_pid = strtol(entry->d_name, &end, 10);
-		if (errno || !end || *end || numeric_pid <= 0 || numeric_pid > INT_MAX)
-			continue;
-		pid_t process_id = (pid_t)numeric_pid;
-		int pidfd = (int)syscall(SYS_pidfd_open, process_id, 0);
-		if (pidfd < 0)
-			continue;
-
-		/* Revalidate after pinning the process. A PID reused between the first
-		 * /proc scan and pidfd_open must not receive our real-time signal. */
-		length = readlink(executable_link, executable, sizeof executable - 1);
-		if (length < 0) {
-			close(pidfd);
-			continue;
-		}
-		executable[length] = 0;
-		if (strcmp(executable, DFR_RENDER_EXE) != 0) {
-			close(pidfd);
-			continue;
-		}
-		if (!renderer_catches_signal(process_id, signal_number)) {
-			close(pidfd);
-			continue;
-		}
-		*process_out = process_id;
-		result = pidfd;
-		break;
-	}
-	closedir(processes);
-	return result;
-}
-
-static int maybe_signal_renderer(int layout_index, int force,
-				 pid_t *delivered_process,
-				 int *delivered_layout)
-{
-	if (layout_index < 0 || layout_index >= DFR_NLAYOUTS)
-		return -1;
-	int signal_number = SIGRTMIN + layout_index;
-	if (signal_number > SIGRTMAX)
-		return -1;
-
-	pid_t renderer = 0;
-	int renderer_fd = open_ready_renderer(signal_number, &renderer);
-	if (renderer_fd < 0)
+	if (strcmp(last_hint, layout_name) == 0)
 		return 0;
-	if (!force && renderer == *delivered_process &&
-	    layout_index == *delivered_layout) {
-		close(renderer_fd);
-		return 1;
-	}
 
-	if (syscall(SYS_pidfd_send_signal, renderer_fd, signal_number, NULL, 0) < 0) {
-		close(renderer_fd);
-		*delivered_process = 0;
-		*delivered_layout = -1;
-		return 0;
+	char path[PATH_MAX];
+	char temporary[PATH_MAX];
+	if (appdeck_hint_path(path, sizeof path) < 0)
+		return -1;
+	int written = snprintf(temporary, sizeof temporary, "%s.tmp.%ld", path,
+			       (long)getpid());
+	if (written < 0 || (size_t)written >= sizeof temporary)
+		return -1;
+
+	FILE *hint = fopen(temporary, "w");
+	if (!hint)
+		return -1;
+	fprintf(hint, "%s\n", layout_name);
+	if (fclose(hint) != 0 || rename(temporary, path) < 0) {
+		unlink(temporary);
+		return -1;
 	}
-	close(renderer_fd);
-	*delivered_process = renderer;
-	*delivered_layout = layout_index;
-	return 1;
+	snprintf(last_hint, sizeof last_hint, "%s", layout_name);
+	return 0;
 }
 
 static int parse_active_window_event(const char *line, size_t line_length,
@@ -628,22 +551,6 @@ static int event_is_title_update(const char *line, size_t line_length)
 	return 0;
 }
 
-static int set_desired_layout(const char *window_class, const char *window_title,
-			      int force, int *desired_layout, pid_t *delivered_process,
-			      int *delivered_layout)
-{
-	const char *layout_name = layout_for_window(window_class, window_title);
-	int layout_index = dfr_layout_index(layout_name);
-	if (layout_index < 0)
-		return -1;
-	int changed = layout_index != *desired_layout;
-	*desired_layout = layout_index;
-	if (force || changed)
-		(void)maybe_signal_renderer(layout_index, 1, delivered_process,
-					    delivered_layout);
-	return 0;
-}
-
 static int serve_hypr_session(const struct hypr_sockets *sockets,
 			      int event_socket)
 {
@@ -654,12 +561,9 @@ static int serve_hypr_session(const struct hypr_sockets *sockets,
 				sizeof window_title) < 0)
 		return -1;
 
-	int desired_layout = -1;
-	int delivered_layout = -1;
-	pid_t delivered_process = 0;
-	if (set_desired_layout(window_class, window_title, 1, &desired_layout,
-			       &delivered_process, &delivered_layout) < 0)
-		return -1;
+	/* The startup query publishes the first hint; later hints follow the
+	 * activewindow events. Nothing here ever forces a renderer redraw. */
+	(void)write_appdeck_hint(window_class, window_title);
 
 	char event_buffer[EVENT_BUFFER_SIZE];
 	size_t used = 0;
@@ -671,12 +575,8 @@ static int serve_hypr_session(const struct hypr_sockets *sockets,
 				continue;
 			return -1;
 		}
-		if (ready == 0) {
-			(void)maybe_signal_renderer(desired_layout, 0,
-						    &delivered_process,
-						    &delivered_layout);
+		if (ready == 0)
 			continue;
-		}
 
 		if (descriptor.revents & POLLIN) {
 			ssize_t received = read(event_socket, event_buffer + used,
@@ -700,22 +600,17 @@ static int serve_hypr_session(const struct hypr_sockets *sockets,
 							      window_class,
 							      sizeof window_class,
 							      window_title,
-							      sizeof window_title)) {
-					(void)set_desired_layout(window_class, window_title, 1,
-							 &desired_layout,
-							 &delivered_process,
-							 &delivered_layout);
-				} else if (event_is_title_update(line, line_length) &&
-					   query_active_window(sockets->command,
-							       window_class,
-							       sizeof window_class,
-							       window_title,
-							       sizeof window_title) == 0) {
-					(void)set_desired_layout(window_class, window_title, 0,
-							 &desired_layout,
-							 &delivered_process,
-							 &delivered_layout);
-				}
+							      sizeof window_title))
+					(void)write_appdeck_hint(window_class,
+								 window_title);
+				else if (event_is_title_update(line, line_length) &&
+					 query_active_window(sockets->command,
+							     window_class,
+							     sizeof window_class,
+							     window_title,
+							     sizeof window_title) == 0)
+					(void)write_appdeck_hint(window_class,
+								 window_title);
 				consumed += line_length + 1;
 			}
 			if (consumed) {

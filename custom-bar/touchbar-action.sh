@@ -100,6 +100,32 @@ send_active_sequence() {
   done
 }
 
+recording_active() {
+  pgrep -f '^gpu-screen-recorder' >/dev/null 2>&1
+}
+
+stop_recording() {
+  omarchy screenrecord --stop-recording
+}
+
+# dfr-render polls '^gpu-screen-recorder' and /tmp/omarchy-screenrecord-filename
+# for the live REC label; keep the process pattern in sync with the renderer.
+record_toggle() {
+  if recording_active; then
+    stop_recording
+  else
+    omarchy screenrecord
+  fi
+}
+
+record_fullscreen() {
+  if recording_active; then
+    stop_recording
+  else
+    omarchy screenrecord --fullscreen
+  fi
+}
+
 load_hyprland_session
 
 case ${1:-} in
@@ -157,6 +183,12 @@ case ${1:-} in
   nvim-new) send_active_sequence ESCAPE SPACE F N ;;
   nvim-buffers) send_active_sequence ESCAPE SPACE COMMA ;;
   lock) omarchy system lock ;;
+  shot-region) omarchy capture screenshot region ;;
+  shot-window) omarchy capture screenshot windows ;;
+  shot-full) omarchy capture screenshot fullscreen save ;;
+  ocr) omarchy capture text ;;
+  record-toggle) record_toggle ;;
+  record-full) record_fullscreen ;;
   *)
     printf 'unknown Touch Bar action: %s\n' "${1:-}" >&2
     exit 2

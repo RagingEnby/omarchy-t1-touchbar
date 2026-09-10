@@ -30,7 +30,7 @@ display stack at commit `982d97a61a0c834d03e7cf7af5203b11ad7bae44` and adds:
 - a MEDIA submenu with Home, brightness, playback and volume;
 - a Tokyo Night Prism visual system with rounded pills, accent rails, occupied
   workspace dots and a distinct current-workspace selection;
-- automatic decks for ChatGPT/Codex, browsers, terminals, VS Code-style
+- on-demand app decks (APPS button) for ChatGPT/Codex, browsers, terminals, VS Code-style
   editors, Omarchy Neovim/LazyVim, Files, communications, writing apps, document
   readers, media and unknown applications;
 - single-pulse native modifier chords for application shortcuts, without

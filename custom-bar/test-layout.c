@@ -15,13 +15,13 @@ int main(void)
 	const char *expected[] = {
 		"fn", "media", "ctrl", "alt", "meta", "browser", "terminal",
 		"code", "nvim", "files", "comms", "document", "reader", "music",
-		"universal",
+		"universal", "capture",
 	};
 	const unsigned allowed_mods = DFR_MOD_CTRL | DFR_MOD_ALT |
 		DFR_MOD_SHIFT | DFR_MOD_META;
 	int hotkey_count = 0;
 
-	if (DFR_NLAYOUTS != 15)
+	if (DFR_NLAYOUTS != 16)
 		return fail("all", DFR_NLAYOUTS, "unexpected layout count");
 
 	for (int l = 0; l < DFR_NLAYOUTS; l++) {
@@ -41,7 +41,7 @@ int main(void)
 
 			if (!key->label || !*key->label || key->weight <= 0.0f)
 				return fail(layout->name, k, "bad label or weight");
-			if (key->action < DFR_ACT_KEY || key->action > DFR_ACT_HOTKEY)
+			if (key->action < DFR_ACT_KEY || key->action > DFR_ACT_APPDECK)
 				return fail(layout->name, k, "unknown action type");
 			if (key->action == DFR_ACT_KEY && key->keycode <= 0)
 				return fail(layout->name, k, "key action has no keycode");
@@ -80,9 +80,17 @@ int main(void)
 	if (hotkey_count == 0)
 		return fail("all", -1, "no native hotkey actions were tested");
 
-	if (strcmp(dfr_keys_media[14].cmd,
+	if (strcmp(dfr_keys_media[17].cmd,
 		   "/run/t1-custom-bar/touchbar-action dictation-toggle") != 0)
-		return fail("media", 14, "home microphone action is missing");
+		return fail("media", 17, "home microphone action is missing");
+	if (dfr_keys_media[11].action != DFR_ACT_APPDECK)
+		return fail("media", 11, "home APPS button is missing");
+	if (!strstr(dfr_keys_media[12].cmd, " shot-region") ||
+	    !strstr(dfr_keys_media[13].cmd, " record-toggle"))
+		return fail("media", 12, "home capture quick actions are missing");
+	if (dfr_layout_index("capture") < 0 ||
+	    !strstr(dfr_keys_capture[3].cmd, " shot-region"))
+		return fail("capture", 3, "capture deck is missing");
 	puts("custom layout geometry/actions: PASS");
 	return 0;
 }
