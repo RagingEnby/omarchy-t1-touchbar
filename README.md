@@ -160,11 +160,12 @@ instructions are in [docs/OMARCHY.md](docs/OMARCHY.md).
 
 ## Touch ID and a programmable bar
 
-- **Touch ID:** not included. Linux does not currently have a public,
-  reproducible T1 match-on-chip `libfprint` driver. A recent private Omarchy
-  proof-of-concept claims enrollment and matching, but its code and protocol
-  are not public. This is a separate security-sensitive reverse-engineering
-  project, not a PAM shortcut. See [docs/TOUCH-ID.md](docs/TOUCH-ID.md).
+- **Touch ID:** available through the separate official
+  [T1Bridge packages](https://github.com/standardagents/t1bridge), using this
+  Mac's preserved calibration data and standard fprintd tools. See
+  [the updated Touch ID notes](docs/TOUCH-ID.md) and
+  [the custom renderer adapter](docs/T1BRIDGE-CUSTOM-BAR.md). Keep password
+  authentication; upstream system suspend/resume support is still incomplete.
 - **Custom graphics and touch:** feasible today through T1 USB configuration 2,
   `appletbdrm`, a config-selection driver, and a userspace renderer/touch
   daemon. A compiled Omarchy overlay now provides direct workspace actions,

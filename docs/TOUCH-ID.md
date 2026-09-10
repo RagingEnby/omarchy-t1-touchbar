@@ -1,6 +1,23 @@
 # Touch ID on the T1: current state and roadmap
 
-## Short answer
+## September 2026 update
+
+[Standard Agents T1Bridge](https://github.com/standardagents/t1bridge) now ships
+signed Arch/Omarchy packages for T1 Touch ID. Standard fprintd enrollment and
+verification have succeeded on the local MacBookPro13,2. The driver requires
+this Mac's preserved Apple fingerprint calibration data; installation alone
+does not enroll a fingerprint or configure PAM. Keep the official libfprint
+and fprintd variants together, retain password authentication, and test every
+PAM consumer. System suspend/resume remains unsupported upstream.
+
+The custom Omarchy layouts can use that hardware stack through the
+[T1Bridge renderer adapter](T1BRIDGE-CUSTOM-BAR.md). Do not combine the old
+firmware-mode startup rules with T1Bridge's configuration selector.
+
+The August notes below are retained as historical research, not current
+installation guidance.
+
+## August 2026 research
 
 Touch ID is materially harder than lighting the Touch Bar. The bar uses a
 recoverable firmware boot plus HID/display interfaces. Touch ID is an
