@@ -56,9 +56,12 @@ The complete live path was verified on:
 
 One MacBookPro14,3 (2017 15-inch, same `x619ap` T1 and `RHUB.ASOC` FRST
 method) has been activated on CachyOS with Linux 7.2. Pass A, Pass B and the
-phase-14 replay completed and the T1 settled as `05ac:8600`, but the script's
-30-second stability check failed because the T1 was absent for about 9 seconds
-during its first EmbeddedOS boot. EFI staging on that machine was done by hand.
+phase-14 replay completed, the T1 settled as `05ac:8600`, and it came back in
+production mode after a reboot. During its first EmbeddedOS boot the T1 was
+absent for about 9 seconds, which failed the stability check before the script
+waited for `05ac:8600` to settle, so EFI staging on that run was done by hand.
+The settle wait and the script's own EFI staging have not yet run end to end on
+a MacBookPro14,3.
 
 The live bar works, including the firmware Esc key and the Fn/function-key
 layout. The shipped configuration defaults to visible F1-F12 (`fnmode=2`),
