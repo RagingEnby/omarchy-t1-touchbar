@@ -75,8 +75,8 @@ fi
 
 model=unknown
 [[ -r /sys/class/dmi/id/product_name ]] && model=$(</sys/class/dmi/id/product_name)
-[[ $model == MacBookPro13,2 ]] ||
-  fail "recovery is guarded for MacBookPro13,2, not $model"
+[[ $model == MacBookPro13,2 || $model == MacBookPro14,3 ]] ||
+  fail "recovery is guarded for MacBookPro13,2 and MacBookPro14,3, not $model"
 
 for command in lsusb rg plistutil systemd-run systemctl modprobe udevadm findmnt; do
   command -v "$command" >/dev/null 2>&1 || fail "required command is missing: $command"

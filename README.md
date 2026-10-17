@@ -46,6 +46,8 @@ the hardware. Linux then owns the visible layout and button behavior.
 The complete live path was verified on:
 
 - MacBookPro13,2 (2016 13-inch Touch Bar)
+- MacBookPro14,3 (2017 15-inch Touch Bar): activation verified once on
+  CachyOS (Linux 7.2), same `x619ap` T1 and `RHUB.ASOC` FRST method
 - Apple T1 `iBridge1,1`, hardware model `x619ap`
 - Omarchy/Arch Linux with a Linux 7.x kernel
 - USB recovery `05ac:1281` to stable production iBridge `05ac:8600`
@@ -112,9 +114,9 @@ sequence is:
 sudo ./scripts/activate-x619.sh --i-understand-this-flashes-the-t1
 ```
 
-The activation script is intentionally restricted to `MacBookPro13,2`,
-`iBridge1,1`, `x619ap`, and USB recovery ID `05ac:1281`. It stores raw logs,
-FDR data, tickets, and personalized images below root-only
+The activation script is intentionally restricted to `MacBookPro13,2` or
+`MacBookPro14,3`, `iBridge1,1`, `x619ap`, and USB recovery ID `05ac:1281`. It
+stores raw logs, FDR data, tickets, and personalized images below root-only
 `/var/lib/t1-touchbar`; it does not print their contents; and it does not reboot
 the host.
 
