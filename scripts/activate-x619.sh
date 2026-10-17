@@ -250,9 +250,7 @@ set -e
 rg -q 'memboot dispatched with USB bRequest=1' "$phase14_log" "$phase14_runner_log" ||
   fail 'phase 14 did not use the required bRequest=1 transaction'
 
-# The T1 can bounce on and off USB during its first EmbeddedOS boot (about
-# 9 s on a MacBookPro14,3). Don't start the stability window until 05ac:8600
-# has held for 5 s.
+# first boot can drop the T1 off usb for a bit (~9s on a 14,3), wait it out
 settled_8600=0
 for attempt in $(seq 1 240); do
   if lsusb -d 05ac:8600 >/dev/null 2>&1; then
