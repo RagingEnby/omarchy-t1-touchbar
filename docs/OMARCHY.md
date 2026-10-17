@@ -180,7 +180,8 @@ The script performs:
 5. Pass B to replay FDR and capture one matching preflight image/ticket pair;
 6. a ten-second commit wait and another T1-only `FRST`;
 7. exact phase-14 image/ticket replay;
-8. 120 USB samples over 30 seconds;
+8. a wait of up to 60 seconds for `05ac:8600` to stay present for five
+   seconds, then 120 USB samples over 30 seconds;
 9. driver binding and HID verification;
 10. atomic EFI staging only after stable live `05ac:8600`.
 

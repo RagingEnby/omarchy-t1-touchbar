@@ -250,6 +250,27 @@ set -e
 rg -q 'memboot dispatched with USB bRequest=1' "$phase14_log" "$phase14_runner_log" ||
   fail 'phase 14 did not use the required bRequest=1 transaction'
 
+# The T1 can drop off USB and re-enumerate for several seconds while its first
+# EmbeddedOS boot runs (about 9 s on a MacBookPro14,3), so the stability window
+# starts only after 05ac:8600 has stayed present for five seconds.
+settled_8600=0
+for attempt in $(seq 1 240); do
+  if lsusb -d 05ac:8600 >/dev/null 2>&1; then
+    ((settled_8600 += 1))
+    if (( settled_8600 >= 20 )); then
+      break
+    fi
+  else
+    settled_8600=0
+  fi
+  sleep 0.25
+done
+if (( settled_8600 < 20 )); then
+  lsusb -d 05ac:1281 >/dev/null 2>&1 &&
+    fail 'T1 returned to recovery instead of production mode'
+  fail 'production iBridge did not settle within 60 seconds'
+fi
+
 seen_8600=0
 seen_1281=0
 seen_absent=0
