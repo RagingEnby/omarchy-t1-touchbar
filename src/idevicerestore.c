@@ -967,11 +967,9 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 	idevicerestore_progress(client, RESTORE_STEP_DETECT, 0.8);
 
 	/* check if device type is supported by the given build manifest.
-	 * T1 iBridge EmbeddedOS manifests list SupportedProductTypeIDs and
-	 * Info.DeviceClass instead of SupportedProductTypes, so this check can
-	 * never pass for them. Skip it only for the opt-in T1 flow on the exact
-	 * iBridge1,1/x619ap identity; the dedicated T1 guards still validate
-	 * mode, product type and hardware model before any TSS request. */
+	 * The T1 EmbeddedOS manifest has no SupportedProductTypes (it uses
+	 * SupportedProductTypeIDs), so this always fails for the T1. The T1
+	 * flow checks iBridge1,1/x619ap itself before any TSS request. */
 	int t1_flow = (env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS") || env_enabled("IDEVICERESTORE_T1_PHASE14")) &&
 		client->device->product_type && client->device->hardware_model &&
 		strcmp(client->device->product_type, "iBridge1,1") == 0 &&

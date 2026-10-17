@@ -250,9 +250,9 @@ set -e
 rg -q 'memboot dispatched with USB bRequest=1' "$phase14_log" "$phase14_runner_log" ||
   fail 'phase 14 did not use the required bRequest=1 transaction'
 
-# The T1 can drop off USB and re-enumerate for several seconds while its first
-# EmbeddedOS boot runs (about 9 s on a MacBookPro14,3), so the stability window
-# starts only after 05ac:8600 has stayed present for five seconds.
+# The T1 can bounce on and off USB during its first EmbeddedOS boot (about
+# 9 s on a MacBookPro14,3). Don't start the stability window until 05ac:8600
+# has held for 5 s.
 settled_8600=0
 for attempt in $(seq 1 240); do
   if lsusb -d 05ac:8600 >/dev/null 2>&1; then

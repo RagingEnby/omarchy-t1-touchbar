@@ -58,8 +58,8 @@ install -D -m 0644 "$repo_root/config/apple-touchbar.conf" /etc/modprobe.d/apple
 say 'installed skip_acpi_power=1 before the module build'
 
 dkms_source="/usr/src/${dkms_name}-${dkms_version}"
-# dkms 3.4.x exits 0 from `dkms status mod/ver` even when the module is
-# not registered, so registration is tested against the DKMS tree directly.
+# `dkms status mod/ver` exits 0 on dkms 3.4.x even when nothing is
+# registered, so check the DKMS tree instead.
 dkms_registered="/var/lib/dkms/$dkms_name/$dkms_version"
 driver_files=(
   Makefile
