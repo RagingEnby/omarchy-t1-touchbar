@@ -104,7 +104,9 @@ if [[ -d $dkms_source ]]; then
 fi
 
 if [[ $source_state != patched ]]; then
-  if dkms status "$dkms_name/$dkms_version" >/dev/null 2>&1; then
+  # dkms 3.4.x exits 0 from `dkms status mod/ver` even when the module is
+  # not registered, so test the DKMS tree directly.
+  if [[ -d /var/lib/dkms/$dkms_name/$dkms_version ]]; then
     dkms remove -m "$dkms_name" -v "$dkms_version" --all
   fi
   install -d -m 0755 "$dkms_source"
@@ -120,7 +122,7 @@ dkms_state=$(dkms status "$dkms_name/$dkms_version" 2>/dev/null || true)
 running_kernel=$(uname -r)
 module_rebuilt=0
 if [[ $dkms_state != *"$running_kernel"*installed* ]]; then
-  if ! dkms status "$dkms_name/$dkms_version" >/dev/null 2>&1; then
+  if [[ ! -d /var/lib/dkms/$dkms_name/$dkms_version ]]; then
     dkms add -m "$dkms_name" -v "$dkms_version"
   fi
   dkms build -m "$dkms_name" -v "$dkms_version"
