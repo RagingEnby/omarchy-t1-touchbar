@@ -191,7 +191,8 @@ else
   say 'no valid same-Mac EFI FDRData; starting Pass A'
   fdr_create_log="$run_dir/fdr-create.private.log"
   fdr_create_runner_log="$run_dir/fdr-create-runner.private.log"
-  install -m 0600 /dev/null "$fdr_create_log" "$fdr_create_runner_log"
+  install -m 0600 /dev/null "$fdr_create_log"
+  install -m 0600 /dev/null "$fdr_create_runner_log"
   start_private_mux
   set +e
   env -u IDEVICERESTORE_T1_FDR_INPUT -u IDEVICERESTORE_T1_PHASE14 -u IDEVICERESTORE_T1_APTICKET_FILE -u IDEVICERESTORE_MEMBOOT_FILE -u IDEVICERESTORE_T1_PREFLIGHT_MEMBOOT_SAVE -u IDEVICERESTORE_T1_PREFLIGHT_TICKET_SAVE LD_LIBRARY_PATH="$library_path" IDEVICERESTORE_T1_EMBEDDEDOS=1 IDEVICERESTORE_T1_FDR_OUTPUT="$fdr_input" IDEVICERESTORE_RESTORE_BOOT_ARGS='rd=md0 -restore IOUSBDeviceController-configuration=standardMuxOnly' "$restore_tool" -y -P -C "$cache_dir" --variant 'Customer Boot' --logfile="$fdr_create_log" "$firmware_dir" >"$fdr_create_runner_log" 2>&1
@@ -209,7 +210,8 @@ else
 fi
 
 say 'starting Pass B: FDR replay plus matching preflight capture'
-install -m 0600 /dev/null "$phase11_log" "$phase11_runner_log"
+install -m 0600 /dev/null "$phase11_log"
+install -m 0600 /dev/null "$phase11_runner_log"
 start_private_mux
 set +e
 env -u IDEVICERESTORE_T1_PHASE14 -u IDEVICERESTORE_T1_APTICKET_FILE -u IDEVICERESTORE_MEMBOOT_FILE LD_LIBRARY_PATH="$library_path" IDEVICERESTORE_T1_EMBEDDEDOS=1 IDEVICERESTORE_T1_FDR_INPUT="$fdr_input" IDEVICERESTORE_T1_FDR_OUTPUT="$fdr_output" IDEVICERESTORE_RESTORE_BOOT_ARGS='rd=md0 -restore IOUSBDeviceController-configuration=standardMuxOnly' IDEVICERESTORE_T1_PREFLIGHT_MEMBOOT_SAVE="$memboot" IDEVICERESTORE_T1_PREFLIGHT_TICKET_SAVE="$apticket" "$restore_tool" -y -P -C "$cache_dir" --variant 'Customer Boot' --logfile="$phase11_log" "$firmware_dir" >"$phase11_runner_log" 2>&1
@@ -238,7 +240,8 @@ sleep 10
 safe_frst
 
 say 'starting exact phase-14 preflight replay'
-install -m 0600 /dev/null "$phase14_log" "$phase14_runner_log"
+install -m 0600 /dev/null "$phase14_log"
+install -m 0600 /dev/null "$phase14_runner_log"
 set +e
 env -u IDEVICERESTORE_T1_EMBEDDEDOS -u IDEVICERESTORE_T1_FDR_INPUT -u IDEVICERESTORE_T1_FDR_OUTPUT -u IDEVICERESTORE_T1_PREFLIGHT_MEMBOOT_SAVE -u IDEVICERESTORE_T1_PREFLIGHT_TICKET_SAVE LD_LIBRARY_PATH="$library_path" IDEVICERESTORE_T1_PHASE14=1 IDEVICERESTORE_MEMBOOT_FILE="$memboot" IDEVICERESTORE_T1_APTICKET_FILE="$apticket" IDEVICERESTORE_RESTORE_BOOT_ARGS='rd=md0' "$restore_tool" -y -P -C "$cache_dir" --variant 'Customer Boot' --logfile="$phase14_log" "$firmware_dir" >"$phase14_runner_log" 2>&1
 phase14_status=$?
