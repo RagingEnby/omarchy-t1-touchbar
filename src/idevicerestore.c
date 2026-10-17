@@ -966,8 +966,17 @@ int idevicerestore_start(struct idevicerestore_client_t* client)
 
 	idevicerestore_progress(client, RESTORE_STEP_DETECT, 0.8);
 
-	/* check if device type is supported by the given build manifest */
-	if (build_manifest_check_compatibility(client->build_manifest, client->device->product_type) < 0) {
+	/* check if device type is supported by the given build manifest.
+	 * T1 iBridge EmbeddedOS manifests list SupportedProductTypeIDs and
+	 * Info.DeviceClass instead of SupportedProductTypes, so this check can
+	 * never pass for them. Skip it only for the opt-in T1 flow on the exact
+	 * iBridge1,1/x619ap identity; the dedicated T1 guards still validate
+	 * mode, product type and hardware model before any TSS request. */
+	int t1_flow = (env_enabled("IDEVICERESTORE_T1_EMBEDDEDOS") || env_enabled("IDEVICERESTORE_T1_PHASE14")) &&
+		client->device->product_type && client->device->hardware_model &&
+		strcmp(client->device->product_type, "iBridge1,1") == 0 &&
+		strcmp(client->device->hardware_model, "x619ap") == 0;
+	if (!t1_flow && build_manifest_check_compatibility(client->build_manifest, client->device->product_type) < 0) {
 		logger(LL_ERROR, "Could not make sure this firmware is suitable for the current device. Refusing to continue.\n");
 		return -1;
 	}
