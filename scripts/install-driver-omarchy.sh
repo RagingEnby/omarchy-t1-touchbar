@@ -58,6 +58,9 @@ install -D -m 0644 "$repo_root/config/apple-touchbar.conf" /etc/modprobe.d/apple
 say 'installed skip_acpi_power=1 before the module build'
 
 dkms_source="/usr/src/${dkms_name}-${dkms_version}"
+# dkms 3.4.x exits 0 from `dkms status mod/ver` even when the module is
+# not registered, so registration is tested against the DKMS tree directly.
+dkms_registered="/var/lib/dkms/$dkms_name/$dkms_version"
 driver_files=(
   Makefile
   apple-ibridge.c
@@ -104,9 +107,7 @@ if [[ -d $dkms_source ]]; then
 fi
 
 if [[ $source_state != patched ]]; then
-  # dkms 3.4.x exits 0 from `dkms status mod/ver` even when the module is
-  # not registered, so test the DKMS tree directly.
-  if [[ -d /var/lib/dkms/$dkms_name/$dkms_version ]]; then
+  if [[ -d $dkms_registered ]]; then
     dkms remove -m "$dkms_name" -v "$dkms_version" --all
   fi
   install -d -m 0755 "$dkms_source"
@@ -122,7 +123,7 @@ dkms_state=$(dkms status "$dkms_name/$dkms_version" 2>/dev/null || true)
 running_kernel=$(uname -r)
 module_rebuilt=0
 if [[ $dkms_state != *"$running_kernel"*installed* ]]; then
-  if [[ ! -d /var/lib/dkms/$dkms_name/$dkms_version ]]; then
+  if [[ ! -d $dkms_registered ]]; then
     dkms add -m "$dkms_name" -v "$dkms_version"
   fi
   dkms build -m "$dkms_name" -v "$dkms_version"
