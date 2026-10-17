@@ -1,8 +1,8 @@
 # Omarchy T1 Touch Bar recovery
 
 Linux-only activation and driver setup for the Apple T1 Touch Bar in the
-2016/2017 Intel MacBook Pro, with an exact, guarded recovery path for the
-`MacBookPro13,2` / `iBridge1,1` / `x619ap` combination.
+2016/2017 Intel MacBook Pro, with an exact, guarded recovery path for
+`MacBookPro13,2` or `MacBookPro14,3` with the `iBridge1,1` / `x619ap` T1.
 
 This repository exists because installing a Linux driver is only half of the
 problem. The driver can bind only after the T1 has passed Apple secure boot and
@@ -46,8 +46,6 @@ the hardware. Linux then owns the visible layout and button behavior.
 The complete live path was verified on:
 
 - MacBookPro13,2 (2016 13-inch Touch Bar)
-- MacBookPro14,3 (2017 15-inch Touch Bar): activation verified once on
-  CachyOS (Linux 7.2), same `x619ap` T1 and `RHUB.ASOC` FRST method
 - Apple T1 `iBridge1,1`, hardware model `x619ap`
 - Omarchy/Arch Linux with a Linux 7.x kernel
 - USB recovery `05ac:1281` to stable production iBridge `05ac:8600`
@@ -55,6 +53,12 @@ The complete live path was verified on:
 - virtual Touch Bar HID bound to `apple-touchbar`
 - the exact live-proven personalized files staged at
   `EFI/APPLE/EMBEDDEDOS`
+
+One MacBookPro14,3 (2017 15-inch, same `x619ap` T1 and `RHUB.ASOC` FRST
+method) has been activated on CachyOS with Linux 7.2. Pass A, Pass B and the
+phase-14 replay completed and the T1 settled as `05ac:8600`, but the script's
+30-second stability check failed because the T1 was absent for about 9 seconds
+during its first EmbeddedOS boot. EFI staging on that machine was done by hand.
 
 The live bar works, including the firmware Esc key and the Fn/function-key
 layout. The shipped configuration defaults to visible F1-F12 (`fnmode=2`),
